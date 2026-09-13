@@ -471,6 +471,16 @@
 
     <div id="favoritesArea" class="mb-3" style="display:none;"></div>
 
+    <!-- KEDVENCEK ÉS ADMINISZTRATÍV GYORSGOMBOK -->
+    <div class="mb-3">
+      <!-- 1. Adminisztratív (Globális) munkák -->
+      <div id="globalFavoritesArea" class="mb-2"></div>
+      
+      <!-- 2. Saját kedvencek -->
+      <div id="userFavoritesArea"></div>
+    </div>
+
+    <!-- MUNKASZÁM KERESŐ DOBOZ -->
     <div class="search-box-highlight">
       <div class="mb-0 position-relative">
         <label class="form-label fw-bold small text-success" for="jobSearch">MUNKASZÁM KERESŐ</label>
@@ -938,11 +948,16 @@
       if (sessionError) throw sessionError;
 
       if (!session) {
-        document.body.innerHTML = '<div style="display:flex; justify-content:center; align-items:center; height:100vh; font-family:sans-serif;"><h3>Átirányítás a Google belépéshez...</h3></div>';
+        document.body.innerHTML = `
+          <div style="display:flex; flex-direction:column; justify-content:center; align-items:center; height:100vh; background-color:#ed2a5c; color:#ffffff; font-family:'Plus Jakarta Sans', sans-serif;">
+            <div class="spinner-border text-light mb-4" style="width: 3.5rem; height: 3.5rem; border-width: 0.35em;" role="status"></div>
+            <h2 class="fw-bold mb-2">Spice Portal</h2>
+            <p class="text-white-50 small" style="opacity: 0.85;">Biztonságos bejelentkezés Google fiókkal...</p>
+          </div>
+        `;
         await loginWithGoogle();
         return;
       }
-
       const userEmail = cleanEmail(session.user.email);
 
       const { data: profiles, error: profileError } = await supabaseClient
@@ -1977,16 +1992,45 @@
     const area = document.getElementById('favoritesArea');
     if (!area) return;
     area.style.display = 'block';
-    
+
     try {
-      const { data: globalData } = await supabaseClient.from('global_favorites').select('*').order('sorrend', { ascending: true });
+      const emailClean = typeof cleanEmail === 'function' ? cleanEmail(currentUserProfile?.email) : currentUserProfile?.email;
+
+      // 1. Admin (Globális) munkaszámok lekérése
+      const { data: globalData } = await supabaseClient
+        .from('global_favorites')
+        .select('*')
+        .order('sorrend', { ascending: true });
 
       const global = (globalData || []).map(g => ({ id: g.munkaszam, vevo: g.vevo || "Belső", munka: g.munka || "" }));
 
+      // 2. Saját kedvencek lekérése a user_favorites táblából
+      const { data: userFavData } = await supabaseClient
+        .from('user_favorites')
+        .select('munkaszam')
+        .ilike('user_email', emailClean);
+
+      const masterList = window.allJobs || window.allMasterProjects || window.allProjectsForStats || [];
+      const userFavs = (userFavData || []).map(f => {
+        const mNum = String(f.munkaszam).trim();
+        const proj = masterList.find(p => String(p.munkaszam || p.id).trim() === mNum) || { id: mNum, vevo: '', munka: '' };
+        return {
+          id: mNum,
+          vevo: proj.vevo || "",
+          munka: proj.munka || proj.megnevezes || ""
+        };
+      });
+
+      // Szinkronizáljuk a globális Set-et is a kereső csillag állapotaihoz
+      if (typeof myFavoriteJobs !== 'undefined') {
+        myFavoriteJobs = new Set(userFavs.map(uf => uf.id));
+      }
+
+      // 3. Előzmények lekérése (work_logs)
       const { data: recentLogs } = await supabaseClient
         .from('work_logs')
         .select('munkaszam, vevo, munka, created_at')
-        .eq('user_email', currentUserProfile.email)
+        .ilike('user_email', emailClean)
         .order('created_at', { ascending: false })
         .limit(30);
 
@@ -1998,7 +2042,9 @@
       });
       const recent = Array.from(recentMap.values()).slice(0, 5);
 
+      // HTML szerkezet felépítése 3 külön szekcióval
       area.innerHTML = `
+        <!-- ADMIN MUNKASZÁMOK -->
         <div id="globalFavSection" class="mb-3" style="${global.length > 0 ? '' : 'display:none;'}">
           <label class="form-label fw-bold small text-primary mb-1"><i class="bi bi-pin-angle me-1"></i> ADMIN MUNKASZÁMOK:</label>
           <select id="globalFavSelect" class="form-select form-select-sm border-primary" onchange="handleGlobalSelect(this)">
@@ -2006,20 +2052,43 @@
             ${global.map(g => `<option value="${g.id}" data-vevo="${escapeHtml(g.vevo)}" data-munka="${escapeHtml(g.munka)}">${g.id} - ${escapeHtml(g.munka)}</option>`).join('')}
           </select>
         </div>
+
+        <!-- SAJÁT KEDVENCEK -->
+        <div id="userFavSection" class="mb-3" style="${userFavs.length > 0 ? '' : 'display:none;'}">
+          <label class="form-label fw-bold small text-warning-emphasis mb-2"><i class="bi bi-star-fill text-warning me-1"></i> SAJÁT KEDVENCEK:</label>
+          <div id="userFavButtons" class="d-flex flex-column gap-1"></div>
+        </div>
+
+        <!-- ELŐZMÉNYEK -->
         <div id="historyFavSection" class="mb-3" style="${recent.length > 0 ? '' : 'display:none;'}">
           <label class="form-label fw-bold small text-muted mb-2"><i class="bi bi-clock-history me-1"></i> ELŐZMÉNYEK:</label>
           <div id="favButtons" class="d-flex flex-column gap-1"></div>
         </div>`;
 
+      // Saját kedvencek gombjainak kirajzolása
+      if (userFavs.length > 0) {
+        const uButtons = document.getElementById('userFavButtons');
+        userFavs.forEach(j => {
+          if (typeof createJobBtn === 'function') {
+            uButtons.appendChild(createJobBtn(j));
+          }
+        });
+      }
+
+      // Előzmények gombjainak kirajzolása
       if (recent.length > 0) {
         const hButtons = document.getElementById('favButtons');
-        recent.forEach(j => { hButtons.appendChild(createJobBtn(j)); });
+        recent.forEach(j => {
+          if (typeof createJobBtn === 'function') {
+            hButtons.appendChild(createJobBtn(j));
+          }
+        });
       }
 
     } catch (e) {
       console.error("Hiba a gyorsválasztó betöltésekor:", e);
     }
-  }
+}
 
   function createJobBtn(j) {
     const b = document.createElement('button'); 
@@ -3169,25 +3238,55 @@ function safeSetGlobalLoading(isLoading, message) {
   }
 
   function filterJobs() {
-    const v = document.getElementById('jobSearch').value.toLowerCase().trim();
-    const list = document.getElementById('jobList');
-    if (v.length < 2) { list.style.display = 'none'; return; }
-    
-    const f = allJobs.filter(j => 
-      j.id.toLowerCase().includes(v) || j.vevo.toLowerCase().includes(v) || j.munka.toLowerCase().includes(v)
-    ).slice(0, 20);
+  const v = document.getElementById('jobSearch').value.toLowerCase().trim();
+  const list = document.getElementById('jobList');
+  if (v.length < 2) { list.style.display = 'none'; return; }
+  
+  const f = allJobs.filter(j => 
+    j.id.toLowerCase().includes(v) || j.vevo.toLowerCase().includes(v) || j.munka.toLowerCase().includes(v)
+  ).slice(0, 20);
 
-    if (f.length === 0) {
-      list.innerHTML = '<div class="dropdown-item text-muted">Nincs találat...</div>';
-    } else {
-      list.innerHTML = f.map(j => `
-        <div class="dropdown-item" data-id="${escapeHtml(j.id)}" data-vevo="${escapeHtml(j.vevo)}" data-munka="${escapeHtml(j.munka)}" onclick="handleJobDropdownClick(this)">
-          <strong>${escapeHtml(j.id)}</strong> - ${escapeHtml(j.vevo)}<br>
-          <small class="text-muted">${escapeHtml(j.munka)}</small>
+  if (f.length === 0) {
+    list.innerHTML = '<div class="dropdown-item text-muted">Nincs találat...</div>';
+  } else {
+    list.innerHTML = f.map(j => {
+      const jobNum = String(j.id).trim();
+      const isFav = typeof myFavoriteJobs !== 'undefined' && myFavoriteJobs.has(jobNum);
+      const starClass = isFav ? 'bi-star-fill text-warning' : 'bi-star text-muted opacity-50';
+
+      return `
+        <div class="dropdown-item d-flex justify-content-between align-items-center py-2" 
+             data-id="${escapeHtml(j.id)}" 
+             data-vevo="${escapeHtml(j.vevo)}" 
+             data-munka="${escapeHtml(j.munka)}" 
+             onclick="handleJobDropdownClick(this)">
+          <div class="flex-grow-1 min-w-0 pe-2">
+            <strong class="text-primary">${escapeHtml(j.id)}</strong> - ${escapeHtml(j.vevo)}<br>
+            <small class="text-muted text-truncate d-block">${escapeHtml(j.munka)}</small>
+          </div>
+          <button type="button" 
+                  class="btn btn-sm btn-link p-1 text-decoration-none flex-shrink-0 ms-2" 
+                  onclick="toggleFavorite('${escapeHtml(jobNum)}', event)" 
+                  title="${isFav ? 'Eltávolítás a kedvencek közül' : 'Hozzáadás a kedvencekhez'}">
+            <i class="bi ${starClass} fs-5"></i>
+          </button>
         </div>
-      `).join('');
-    }
-    list.style.display = 'block';
+      `;
+    }).join('');
+  }
+  list.style.display = 'block';
+}
+
+// Munkaszám kiválasztása a kereső listából
+  function selectJob(munkaszam) {
+    const input = document.getElementById('jobSearch');
+    if (input) input.value = munkaszam;
+
+    const container = document.getElementById('jobList');
+    if (container) container.style.display = 'none';
+
+    if (typeof onJobSelect === 'function') onJobSelect(munkaszam);
+    if (typeof validateWorkForm === 'function') validateWorkForm();
   }
 
   function openConfirmModal(type) {
@@ -4675,6 +4774,152 @@ function isGroupAllowedForLeader(targetGroup, userProf = null) {
   // 3. TARTALÉK: SAJÁT CSOPORT
   const ownGroup = cleanStr(prof.display_csoport || prof.csoport);
   return ownGroup === normTarget;
+}
+
+let myFavoriteJobs = new Set();
+let globalFavoriteJobs = new Set();
+
+// 1. KÖZÖS BETÖLTŐ FÜGGVÉNY (Ezt hívd meg belépéskor!)
+async function loadAllFavorites() {
+  await Promise.all([
+    loadGlobalFavorites(),
+    loadUserFavorites()
+  ]);
+}
+
+// 3. SAJÁT KEDVENCEK BETÖLTÉSE
+async function loadUserFavorites() {
+  if (!currentUserProfile?.email) return;
+  const emailClean = cleanEmail(currentUserProfile.email);
+
+  try {
+    const { data, error } = await supabaseClient
+      .from('user_favorites')
+      .select('munkaszam')
+      .ilike('user_email', emailClean);
+
+    if (error) throw error;
+
+    myFavoriteJobs = new Set((data || []).map(f => String(f.munkaszam).trim()));
+    renderUserFavorites();
+  } catch (err) {
+    console.error("Hiba a saját kedvencek betöltésekor:", err);
+  }
+}
+
+// 5. SAJÁT KEDVENCEK SÁV MEGJELENÍTÉSE
+function renderUserFavorites() {
+  const area = document.getElementById('userFavoritesArea');
+  if (!area) return;
+
+  if (myFavoriteJobs.size === 0) {
+    area.innerHTML = '<span class="text-muted small opacity-75"><i class="bi bi-star me-1"></i>Nincsenek saját kedvenceid. Csillagozz be egyet a keresőben!</span>';
+    return;
+  }
+
+  const masterList = window.allJobs || window.allMasterProjects || window.allProjectsForStats || [];
+
+  const buttonsHtml = Array.from(myFavoriteJobs).map(jobNum => {
+    const proj = masterList.find(p => String(p.munkaszam || p.id).trim() === jobNum) || { id: jobNum, vevo: '' };
+    const vevoText = proj.vevo ? `<small class="text-muted ms-1">${escapeHtml(proj.vevo)}</small>` : '';
+
+    return `
+      <button type="button" 
+              class="btn btn-sm btn-outline-warning text-dark bg-warning-subtle border-warning me-1 mb-1 shadow-sm d-inline-flex align-items-center gap-1"
+              onclick="selectFavoriteJob('${escapeHtml(jobNum)}')">
+        <i class="bi bi-star-fill text-warning"></i>
+        <strong>${escapeHtml(jobNum)}</strong>${vevoText}
+      </button>
+    `;
+  }).join('');
+
+  area.innerHTML = `
+    <div class="d-flex flex-wrap align-items-center gap-1">
+      <span class="small fw-bold text-warning-emphasis me-2">Saját kedvencek:</span>
+      ${buttonsHtml}
+    </div>
+  `;
+}
+
+// 6. GOMBRA KATTINTÁS (KIVÁLASZTÁS) LEKEZELÉSE
+function selectFavoriteJob(munkaszam) {
+  // Beírjuk a keresőmezőbe a számot, mintha a user gépelte volna
+  const searchInput = document.getElementById('jobSearch');
+  if (searchInput) {
+    searchInput.value = munkaszam;
+  }
+  
+  // Megkeressük az adatokat az összes projekt közül
+  const masterList = window.allJobs || window.allMasterProjects || window.allProjectsForStats || [];
+  const proj = masterList.find(p => String(p.munkaszam || p.id).trim() === munkaszam);
+  
+  if (proj) {
+    // Ezzel szimuláljuk, mintha a listából választotta volna ki
+    const fakeEl = document.createElement('div');
+    fakeEl.setAttribute('data-id', proj.id || proj.munkaszam);
+    fakeEl.setAttribute('data-vevo', proj.vevo || '');
+    fakeEl.setAttribute('data-munka', proj.munka || '');
+    
+    if (typeof handleJobDropdownClick === 'function') {
+      handleJobDropdownClick(fakeEl);
+    } else if (typeof selectJob === 'function') {
+      selectJob(munkaszam);
+    }
+  }
+}
+
+async function toggleFavorite(munkaszam, event) {
+  // Megakadályozzuk, hogy a szülő div (sor) kattintása is lefusson
+  if (event) {
+    event.stopPropagation();
+    event.preventDefault();
+  }
+
+  if (!currentUserProfile?.email || !munkaszam) return;
+
+  const emailClean = typeof cleanEmail === 'function' ? cleanEmail(currentUserProfile.email) : currentUserProfile.email;
+  const jobClean = String(munkaszam).trim();
+  
+  // Ha még nem létezik a globális Set, inicializáljuk
+  if (typeof myFavoriteJobs === 'undefined') {
+    window.myFavoriteJobs = new Set();
+  }
+
+  const isFav = myFavoriteJobs.has(jobClean);
+
+  try {
+    if (isFav) {
+      const { error } = await supabaseClient
+        .from('user_favorites')
+        .delete()
+        .ilike('user_email', emailClean)
+        .eq('munkaszam', jobClean);
+
+      if (error) throw error;
+      myFavoriteJobs.delete(jobClean);
+    } else {
+      const { error } = await supabaseClient
+        .from('user_favorites')
+        .insert([{ user_email: emailClean, munkaszam: jobClean }]);
+
+      if (error) throw error;
+      myFavoriteJobs.add(jobClean);
+    }
+
+    // 1. Frissítjük a kereső feletti SAJÁT KEDVENCEK blokkot
+    if (typeof loadQuickSelection === 'function') {
+      await loadQuickSelection();
+    }
+
+    // 2. Frissítjük a nyitott keresési listát a csillagok állapotával
+    if (typeof filterJobs === 'function') {
+      filterJobs();
+    }
+
+  } catch (err) {
+    console.error("Hiba a kedvenc mentésekor/törlésekor:", err);
+    alert("Nem sikerült a kedvenc mentése. Ellenőrizd a Supabase 'user_favorites' táblát!");
+  }
 }
 
 </script>

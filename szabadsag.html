@@ -2163,7 +2163,13 @@ const cleanEmail = (str) => String(str || '').replace(/"/g, '').trim().toLowerCa
       const cleanCurrentUrl = window.location.href.split('#')[0].split('?')[0];
 
       if (!session) {
-        document.body.innerHTML = '<div style="display:flex; justify-content:center; align-items:center; height:100vh; font-family:sans-serif;"><h3>Átirányítás a belépéshez...</h3></div>';
+        document.body.innerHTML = `
+          <div style="display:flex; flex-direction:column; justify-content:center; align-items:center; height:100vh; background-color:#ed2a5c; color:#ffffff; font-family:'Plus Jakarta Sans', sans-serif;">
+            <div class="spinner-border text-light mb-4" style="width: 3.5rem; height: 3.5rem; border-width: 0.35em;" role="status"></div>
+            <h2 class="fw-bold mb-2">Spice Portal</h2>
+            <p class="text-white-50 small" style="opacity: 0.85;">Biztonságos bejelentkezés Google fiókkal...</p>
+          </div>
+        `;
         // A teljes pontos URL-re kérjük az átirányítást (a GitHub Pages al-mappájával együtt)
         await supabaseClient.auth.signInWithOAuth({ 
           provider: 'google', 
