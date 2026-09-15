@@ -2427,8 +2427,8 @@ const cleanEmail = (str) => String(str || '').replace(/"/g, '').trim().toLowerCa
     return diffMins > 0 ? (diffMins / 60) : 0;
   }
 
-  // A HETI HO ÉS SZABAD SÁG KORLÁTOK ELLENŐRZÉSE (TÖBBNAPOS HO IGÉNYLÉSEKRE IS)
-function checkWeeklyHOConditions(userEmail, startDateStr, endDateStr, requestsList) {
+  // A HETI KORLÁTOK TÖRÖLVE - KIZÁRÓLAG A HAVI 10 NAPOS KERETET ELLENŐRIZZÜK
+function checkMonthlyHOConditions(userEmail, startDateStr, endDateStr, requestsList, userHoLimit = 10) {
   if (!startDateStr) return { needsSpecialHR: false, reason: '' };
 
   const safeNorm = (s) => String(s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
@@ -2448,37 +2448,30 @@ function checkWeeklyHOConditions(userEmail, startDateStr, endDateStr, requestsLi
   const reqEnd = getCleanYMD(endDateStr || startDateStr) || reqStart;
   if (!reqStart || !reqEnd) return { needsSpecialHR: false, reason: '' };
 
-  // Segédfüggvény a hét Hétfőjének YYYY-MM-DD azonosítójához
-  const getMondayStr = (d) => {
-    const dayOfWeek = d.getDay();
-    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    const mon = new Date(d);
-    mon.setDate(d.getDate() + mondayOffset);
-    return `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, '0')}-${String(mon.getDate()).padStart(2, '0')}`;
-  };
+  const targetMonthStr = `${reqStart.getFullYear()}-${String(reqStart.getMonth() + 1).padStart(2, '0')}`;
 
-  // Hetek szerinti gyűjtő objektum
-  const weekMap = {};
-
-  // 1. Az új HO kérelem munkanapjainak hozzáadása a hetekhez
+  // 1. A kért igénylés munkanapjainak megszámlálása
+  let requestedDays = 0;
   let curr = new Date(reqStart.getTime());
   while (curr <= reqEnd) {
     const dWeek = curr.getDay();
     if (dWeek !== 0 && dWeek !== 6) { // Csak munkanapok
-      const monStr = getMondayStr(curr);
-      if (!weekMap[monStr]) weekMap[monStr] = { existingHO: 0, existingLeave: 0, newHO: 0, newLeave: 0 };
-      weekMap[monStr].newHO++;
+      requestedDays++;
     }
     curr.setDate(curr.getDate() + 1);
   }
 
-  // 2. Az adatbázisban már meglévő kérelmek megszámolása az érintett hetekre
+  // 2. Már meglévő / elfogadott HO napok megszámolása a tárgyhónapban
+  let existingHODays = 0;
   (requestsList || []).forEach(r => {
     const rEmail = safeNorm(r.user_email || r.email || r.munkatars_email);
     if (rEmail && rEmail !== targetEmail) return;
 
     const st = safeNorm(r.status || r.statusz || '');
     if (st.includes('reject') || st.includes('elutasit') || st.includes('visszavon')) return;
+
+    const t = safeNorm(r.tipus || r.jelleg || '');
+    if (!t.includes('home') && !t.includes('otthon') && t !== 'ho') return;
 
     const rStartD = getCleanYMD(r.kezdo_datum || r.datum);
     const rEndD = getCleanYMD(r.veg_datum || r.kezdo_datum || r.datum) || rStartD;
@@ -2487,46 +2480,27 @@ function checkWeeklyHOConditions(userEmail, startDateStr, endDateStr, requestsLi
     let rCurr = new Date(rStartD.getTime());
     while (rCurr <= rEndD) {
       const dWeek = rCurr.getDay();
-      if (dWeek !== 0 && dWeek !== 6) {
-        const monStr = getMondayStr(rCurr);
-        if (weekMap[monStr]) {
-          const t = safeNorm(r.tipus || r.jelleg || '');
-          if (t === 'ho' || t.includes('home') || t.includes('otthon')) {
-            weekMap[monStr].existingHO++;
-          } else if (t === 'sz' || t === 't' || t.includes('szabadsag') || t.includes('tavalyi') || t.includes('alap')) {
-            weekMap[monStr].existingLeave++;
-          }
-        }
+      const monthStr = `${rCurr.getFullYear()}-${String(rCurr.getMonth() + 1).padStart(2, '0')}`;
+      if (dWeek !== 0 && dWeek !== 6 && monthStr === targetMonthStr) {
+        existingHODays++;
       }
       rCurr.setDate(rCurr.getDate() + 1);
     }
   });
 
-  // 3. Szabályzat ellenőrzése hétről hétre
-  for (const monStr in weekMap) {
-    const w = weekMap[monStr];
-    const totalHO = w.existingHO + w.newHO;
-    const totalLeave = w.existingLeave + w.newLeave;
+  const totalHO = existingHODays + requestedDays;
+  const maxAllowed = Number(userHoLimit) || 10;
 
-    if (totalLeave >= 2 && totalHO > 0) {
-      return {
-        needsSpecialHR: true,
-        reason: `A ${monStr} kezdésű héten ${totalLeave} nap szabadság mellett nem vehető ki Home Office különleges HR engedély nélkül.`
-      };
-    }
-
-    if (totalHO > 2) {
-      return {
-        needsSpecialHR: true,
-        reason: `A ${monStr} kezdésű héten a kért HO-val együtt összesen ${totalHO} nap Home Office lenne (max. 2 nap engedélyezett). Ez különleges HR engedélyt igényel.`
-      };
-    }
+  if (totalHO > maxAllowed) {
+    return {
+      needsSpecialHR: true,
+      reason: `Túllépnéd a havi HO keretedet! (Már felhasználtál ${existingHODays} napot, a kért ${requestedDays} nappal összesen ${totalHO} nap lenne. A havi keret: ${maxAllowed} nap).`
+    };
   }
 
   return { needsSpecialHR: false, reason: '' };
-} 
-
-  let pendingSpecialHORequest = null;
+}
+let pendingSpecialHORequest = null;
 
 async function handleFormSubmit(e) {
   if (e) e.preventDefault();
@@ -2560,10 +2534,12 @@ async function handleFormSubmit(e) {
     }
   }
 
-  // 2. HOME OFFICE HETI SZABÁLYZAT ELLENŐRZÉSE (MODÁL NYITÁSSAL)
+  // 2. HOME OFFICE HAVI KERET ELLENŐRZÉSE (MODÁL NYITÁSSAL)
   if (tipus === 'Home office' || tipus === 'HO') {
-    const hoCheck = typeof checkWeeklyHOConditions === 'function'
-      ? checkWeeklyHOConditions(currentUserProfile.email, kezdoDatum, vegDatum, userRequestsCache)
+    const userHoLimit = currentUserProfile?.ho_keret || 10;
+
+    const hoCheck = typeof checkMonthlyHOConditions === 'function'
+      ? checkMonthlyHOConditions(currentUserProfile.email, kezdoDatum, vegDatum, userRequestsCache, userHoLimit)
       : { needsSpecialHR: false, reason: '' };
     
     if (hoCheck.needsSpecialHR) {
