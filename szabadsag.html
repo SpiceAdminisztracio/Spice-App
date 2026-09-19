@@ -1627,6 +1627,17 @@
             </div>
           </div>
 
+          <!-- ÚJ MEZŐ: EGYEDI LÁTHATÓ FÜLEK -->
+          <div class="row g-2 mb-3">
+            <div class="col-12">
+              <label class="form-label small fw-bold">
+                Egyedi Látható Fülek 
+                <small class="text-muted fw-normal">(Üresen hagyva a szerepkör dönt. Opciók: Csapar Bírálat, Túlmunka Jóváhagyás, Bérszámfejtés, Adminisztráció )</small>
+              </label>
+              <input type="text" class="form-control form-control-sm border-info" id="editUserLatottFulek" placeholder="pl. Csapar Bírálat, Túlmunka Jóváhagyás, Bérszámfejtés, Adminisztráció">
+            </div>
+          </div>
+
           <hr class="my-3">
           <h6 class="fw-bold text-dark mb-2">📅 Munkaviszony és Státusz</h6>
           <div class="row g-2 mb-3">
@@ -2264,48 +2275,65 @@ const cleanEmail = (str) => String(str || '').replace(/"/g, '').trim().toLowerCa
 }
 
   function updateTabVisibility(profile) {
-    if (!profile) return;
+  if (!profile) return;
 
-    const rawRole = normalizeStr(profile.jogosultsag || profile.role);
-    const rawPos = normalizeStr(profile.pozicio);
+  const rawRole = normalizeStr(profile.jogosultsag || profile.role);
+  const rawPos = normalizeStr(profile.pozicio || '');
 
-    const cleanRole = rawRole.includes('csoportvez') ? 'csoportvezeto'
-                    : rawRole.includes('lead') ? 'leader'
-                    : rawRole.includes('manag') ? 'manager'
-                    : rawRole.includes('admin') ? 'admin'
-                    : rawRole.includes('boss') ? 'boss'
-                    : rawRole.includes('hr') ? 'hr'
-                    : 'user';
+  const cleanRole = rawRole.includes('csoportvez') ? 'csoportvezeto'
+                  : rawRole.includes('lead') ? 'leader'
+                  : rawRole.includes('manag') ? 'manager'
+                  : rawRole.includes('admin') ? 'admin'
+                  : rawRole.includes('boss') ? 'boss'
+                  : rawRole.includes('hr') ? 'hr'
+                  : 'user';
 
-    const canSeeTeam = ['manager', 'leader', 'csoportvezeto', 'admin', 'boss'].includes(cleanRole);
-    const canSeeAdmin = (cleanRole === 'admin');
-    const canSeeOvertime = ['manager', 'leader', 'csoportvezeto', 'admin', 'boss', 'hr'].includes(cleanRole) || rawPos.includes('hr');
-    const canSeePayroll = ['admin', 'boss', 'hr'].includes(cleanRole) || rawPos.includes('hr');
+  let canSeeTeam, canSeeAdmin, canSeeOvertime, canSeePayroll;
 
-    const navTeam = document.getElementById('nav-team');
-    if (navTeam) navTeam.classList.toggle('hidden', !canSeeTeam);
+  // Egyedi látott fülek ellenőrzése
+  const customTabsRaw = String(profile.latott_fulek || '').trim().toLowerCase();
+  const hasCustomTabs = customTabsRaw !== '' && customTabsRaw !== 'null' && customTabsRaw !== 'undefined';
 
-    const navAdmin = document.getElementById('nav-admin');
-    if (navAdmin) navAdmin.classList.toggle('hidden', !canSeeAdmin);
-
-    const navOvertime = document.getElementById('nav-overtime');
-    if (navOvertime) navOvertime.classList.toggle('hidden', !canSeeOvertime);
-
-    const navPayroll = document.getElementById('nav-payroll');
-    if (navPayroll) navPayroll.classList.toggle('hidden', !canSeePayroll);
-
-    const mbTeam = document.getElementById('mbTabTeam');
-    if (mbTeam) mbTeam.classList.toggle('hidden', !canSeeTeam);
-
-    const mbAdmin = document.getElementById('mbTabAdmin');
-    if (mbAdmin) mbAdmin.classList.toggle('hidden', !canSeeAdmin);
-
-    const mbOvertime = document.getElementById('mbTabOvertime');
-    if (mbOvertime) mbOvertime.classList.toggle('hidden', !canSeeOvertime);
-
-    const mbPayroll = document.getElementById('mbTabPayroll');
-    if (mbPayroll) mbPayroll.classList.toggle('hidden', !canSeePayroll);
+  if (hasCustomTabs) {
+    // Ha van egyedi beállítás a profilban
+    canSeeTeam = customTabsRaw.includes('team') || customTabsRaw.includes('csapat');
+    canSeeAdmin = customTabsRaw.includes('admin');
+    canSeeOvertime = customTabsRaw.includes('overtime') || customTabsRaw.includes('tulmunka') || customTabsRaw.includes('biralat');
+    canSeePayroll = customTabsRaw.includes('payroll') || customTabsRaw.includes('berfejtes') || customTabsRaw.includes('berszamfejtes');
+  } else {
+    // Alapértelmezett szerepkör és pozíció alapú jogosultságok
+    canSeeTeam = ['manager', 'leader', 'csoportvezeto', 'admin', 'boss'].includes(cleanRole);
+    canSeeAdmin = (cleanRole === 'admin');
+    canSeeOvertime = ['manager', 'leader', 'csoportvezeto', 'admin', 'boss', 'hr'].includes(cleanRole) || rawPos.includes('hr');
+    canSeePayroll = ['admin', 'boss', 'hr'].includes(cleanRole) || rawPos.includes('hr');
   }
+
+  // Felső navigációs menü kapcsolása
+  const navTeam = document.getElementById('nav-team');
+  if (navTeam) navTeam.classList.toggle('hidden', !canSeeTeam);
+
+  const navAdmin = document.getElementById('nav-admin');
+  if (navAdmin) navAdmin.classList.toggle('hidden', !canSeeAdmin);
+
+  const navOvertime = document.getElementById('nav-overtime');
+  if (navOvertime) navOvertime.classList.toggle('hidden', !canSeeOvertime);
+
+  const navPayroll = document.getElementById('nav-payroll');
+  if (navPayroll) navPayroll.classList.toggle('hidden', !canSeePayroll);
+
+  // Mobil alsó navigációs sáv kapcsolása
+  const mbTeam = document.getElementById('mbTabTeam');
+  if (mbTeam) mbTeam.classList.toggle('hidden', !canSeeTeam);
+
+  const mbAdmin = document.getElementById('mbTabAdmin');
+  if (mbAdmin) mbAdmin.classList.toggle('hidden', !canSeeAdmin);
+
+  const mbOvertime = document.getElementById('mbTabOvertime');
+  if (mbOvertime) mbOvertime.classList.toggle('hidden', !canSeeOvertime);
+
+  const mbPayroll = document.getElementById('mbTabPayroll');
+  if (mbPayroll) mbPayroll.classList.toggle('hidden', !canSeePayroll);
+}
 
   async function loadMyRequests() {
     if (!currentUserProfile) return;
@@ -3082,12 +3110,13 @@ async function submitSpecialHORequest() {
   setVal('editUserRole', (user.jogosultsag || user.role || 'user').toLowerCase().trim());
   setVal('editUserGroup', user.csoport || '');
   setVal('editUserPozicio', user.pozicio || '');
-  
+  setVal('editUserLatottFulek', user.latott_fulek || '');
+
   // Munkaidő keret / Napi limit beállítása
   setVal('editUserNapiLimit', user.munkaido_keret || user.napi_limit || 8);
   setVal('editUserEvesKeret', user.eves_keret || 20);
   setVal('editUserTavalyiKeret', user.tavalyi_keret || 0);
-  setVal('editUserHoKeret', user.ho_keret || 4);
+  setVal('editUserHoKeret', user.ho_keret || 10);
 
   setVal('editUserStatus', (user.statusz || 'aktív').toLowerCase().trim());
   setVal('editUserBelepett', user.belepett || '');
@@ -3114,12 +3143,14 @@ async function submitSpecialHORequest() {
 
     const belepettVal = document.getElementById('editUserBelepett')?.value || '';
     const kilepettVal = document.getElementById('editUserKilepett')?.value || '';
+    const latottFulekVal = document.getElementById('editUserLatottFulek')?.value.trim() || '';
 
     const updatedData = {
       nev: document.getElementById('editUserName').value.trim(),
       jogosultsag: document.getElementById('editUserRole').value,
       csoport: document.getElementById('editUserGroup').value.trim(),
       pozicio: document.getElementById('editUserPozicio')?.value.trim() || '',
+      latott_fulek: latottFulekVal !== '' ? latottFulekVal : null,
       munkaido_keret: Number(document.getElementById('editUserNapiLimit')?.value) || 8,
       eves_keret: Number(document.getElementById('editUserEvesKeret')?.value) || 0,
       tavalyi_keret: Number(document.getElementById('editUserTavalyiKeret')?.value) || 0,
@@ -3554,17 +3585,46 @@ function updateSubstituteVisibility() {
   }
 }
 
-// HELYETTES KIVÁLASZTÓ LISTA FELTÖLTÉSE (PONTOS 'statusz' OSZLOP SZŰRÉSSEL)
+// HELYETTES KIVÁLASZTÓ LISTA FELTÖLTÉSE (FELETTESEK ÉS HR VEZETŐ BIZTONSÁGOS ILLESZTÉSÉVEL)
 async function populateSubstitutesDropdown() {
   const select = document.getElementById('reqHelyettes');
   if (!select) return;
 
   try {
     const prof = window.currentUserProfile || (typeof currentUserProfile !== 'undefined' ? currentUserProfile : {});
-    const safeNorm = (s) => String(s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const cleanFn = typeof cleanEmail === 'function' ? cleanEmail : (s) => String(s || '').replace(/"/g, '').trim().toLowerCase();
     
     updateSubstituteVisibility();
 
+    // 1. HR Vezető e-mail címének lekérése
+    const hrEmail = typeof getHRManagerEmail === 'function' ? await getHRManagerEmail() : '';
+
+    // 2. A felettesek e-mail címeinek összegyűjtése és tisztítása (vesszővel elválasztott lista támogatásával)
+    const allowedEmails = new Set();
+    const rawEmails = [
+      prof.csoportvezeto_email,
+      prof.leader_email,
+      prof.manager_email,
+      prof.boss_email,
+      hrEmail
+    ];
+
+    rawEmails.forEach(raw => {
+      if (!raw) return;
+      String(raw).split(',').forEach(item => {
+        const cleaned = cleanFn(item);
+        if (cleaned && cleaned !== 'null' && cleaned !== 'undefined' && cleaned !== 'empty') {
+          allowedEmails.add(cleaned);
+        }
+      });
+    });
+
+    const currentEmail = cleanFn(prof.email);
+
+    // Konzolra kiírjuk az engedélyezett felettesi címeket a könnyű ellenőrzéshez
+    console.log("Engedélyezett felettesi e-mail címek a helyettesítéshez:", Array.from(allowedEmails));
+
+    // 3. Profilok lekérése
     const { data, error } = await supabaseClient
       .from('profiles')
       .select('*')
@@ -3572,26 +3632,27 @@ async function populateSubstitutesDropdown() {
 
     if (error) throw error;
 
-    const currentEmail = safeNorm(prof.email);
-
+    // 4. Szűrés: Csak az engedélyezett felettesek / HR vezető és aktív profilok
     const filteredData = (data || []).filter(e => {
-      const isNotSelf = safeNorm(e.email) !== currentEmail;
-      
-      // 1. Jogosultság ellenőrzés
-      const role = safeNorm(e.jogosultsag || e.role);
-      const isAllowedRole = NON_USER_ROLES.includes(role);
+      const eEmail = cleanFn(e.email);
+      const isNotSelf = eEmail !== currentEmail;
+      const isAllowed = allowedEmails.has(eEmail);
 
-      // 2. Pontos státusz ellenőrzés a 'statusz' oszlop alapján (aktív elfogadása, inaktív kizárása)
-      const st = safeNorm(e.statusz || e.status || '');
-      const isActive = st === 'aktiv' || (!st.includes('inaktiv') && st !== '');
+      const st = String(e.statusz || e.status || '').toLowerCase().trim();
+      const isActive = st === 'aktiv' || st === 'aktív' || (!st.includes('inaktiv') && st !== '');
 
-      return isNotSelf && isAllowedRole && isActive;
+      return isNotSelf && isAllowed && isActive;
     });
 
     const safeEscape = (t) => String(t || '').replace(/[&<>"']/g, '');
 
-    select.innerHTML = '<option value="" disabled selected>-- Válassz helyettest a listából --</option>' +
-      filteredData.map(e => `<option value="${safeEscape(e.email)}">${safeEscape(e.nev || e.email)}</option>`).join('');
+    if (filteredData.length === 0) {
+      select.innerHTML = '<option value="" disabled selected>-- Nincs kiválasztható felettes / HR vezető --</option>';
+      return;
+    }
+
+    select.innerHTML = '<option value="" disabled selected>-- Válassz felettest / HR vezetőt --</option>' +
+      filteredData.map(e => `<option value="${safeEscape(e.email)}">${safeEscape(e.nev || e.email)} (${safeEscape(e.pozicio || 'Felettes')})</option>`).join('');
 
   } catch (e) {
     console.error("Helyettesek betöltési hiba:", e);

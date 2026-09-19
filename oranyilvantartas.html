@@ -401,6 +401,14 @@
         display: none !important;
       }
     }
+
+    /* CSAPAT STATISZTIKA ALFÜLEK ALAPÉRTELMEZETT REJTÉSE */
+#team-stat-tab .tab-pane {
+  display: none;
+}
+#team-stat-tab .tab-pane.active {
+  display: block;
+}
   </style>
 </head>
 
@@ -1733,42 +1741,74 @@
   }
 
   async function getProjectReportFromSupabase(jobId) {
-    const { data: logs, error } = await supabaseClient.from('work_logs').select('*').eq('munkaszam', jobId);
+  let logs = [];
+  let fromIdx = 0;
+  const step = 1000;
+
+  // PAGINÁLT LEKÉRDEZÉS A SUPABASE 1000 SOROS LIMITJÉNEK FELOLDÁSÁRA
+  while (true) {
+    const { data: chunk, error } = await supabaseClient
+      .from('work_logs')
+      .select('*')
+      .eq('munkaszam', jobId)
+      .range(fromIdx, fromIdx + step - 1);
+
     if (error) throw error;
-
-    const proj = allMasterProjects.find(p => p.id === jobId);
-    const clientName = proj ? proj.vevo : (logs.length > 0 ? logs[0].vevo : "Ismeretlen");
-    const projectName = proj ? proj.munka : (logs.length > 0 ? logs[0].munka : "");
-
-    return await buildReportObject(logs, clientName, projectName, `Riport_${jobId}`);
+    if (chunk && chunk.length > 0) logs.push(...chunk);
+    if (!chunk || chunk.length < step) break;
+    fromIdx += step;
   }
 
-  async function getClientYearlyReportFromSupabase(clientName) {
-    const cleanClient = clientName.trim();
+  const proj = allMasterProjects.find(p => p.id === jobId);
+  const clientName = proj ? proj.vevo : (logs.length > 0 ? logs[0].vevo : "Ismeretlen");
+  const projectName = proj ? proj.munka : (logs.length > 0 ? logs[0].munka : "");
 
-    const matchingJobIds = allMasterProjects
-      .filter(p => p.vevo && p.vevo.toLowerCase().includes(cleanClient.toLowerCase()))
-      .map(p => p.id);
+  return await buildReportObject(logs, clientName, projectName, `Riport_${jobId}`);
+}
 
-    let logs = [];
+async function getClientYearlyReportFromSupabase(clientName) {
+  const cleanClient = clientName.trim();
 
-    if (matchingJobIds.length > 0) {
-      const formattedJobIds = matchingJobIds.map(id => `"${id}"`).join(',');
-      const { data, error } = await supabaseClient
+  const matchingJobIds = allMasterProjects
+    .filter(p => p.vevo && p.vevo.toLowerCase().includes(cleanClient.toLowerCase()))
+    .map(p => p.id);
+
+  let logs = [];
+  let fromIdx = 0;
+  const step = 1000;
+
+  // PAGINÁLT LEKÉRDEZÉS ÜGYFÉL ALAPJÁN
+  if (matchingJobIds.length > 0) {
+    const formattedJobIds = matchingJobIds.map(id => `"${id}"`).join(',');
+    while (true) {
+      const { data: chunk, error } = await supabaseClient
         .from('work_logs')
         .select('*')
-        .or(`munkaszam.in.(${formattedJobIds}),vevo.ilike.%${cleanClient}%`);
+        .or(`munkaszam.in.(${formattedJobIds}),vevo.ilike.%${cleanClient}%`)
+        .range(fromIdx, fromIdx + step - 1);
 
       if (error) throw error;
-      logs = data || [];
-    } else {
-      const { data, error } = await supabaseClient.from('work_logs').select('*').ilike('vevo', `%${cleanClient}%`);
-      if (error) throw error;
-      logs = data || [];
+      if (chunk && chunk.length > 0) logs.push(...chunk);
+      if (!chunk || chunk.length < step) break;
+      fromIdx += step;
     }
+  } else {
+    while (true) {
+      const { data: chunk, error } = await supabaseClient
+        .from('work_logs')
+        .select('*')
+        .ilike('vevo', `%${cleanClient}%`)
+        .range(fromIdx, fromIdx + step - 1);
 
-    return await buildReportObject(logs, cleanClient, "Összes projekt", `Riport_${cleanClient}`);
+      if (error) throw error;
+      if (chunk && chunk.length > 0) logs.push(...chunk);
+      if (!chunk || chunk.length < step) break;
+      fromIdx += step;
+    }
   }
+
+  return await buildReportObject(logs, cleanClient, "Összes projekt", `Riport_${cleanClient}`);
+}
 
   async function buildReportObject(logs, clientName, projectName, fileNameBase) {
     if (!logs || logs.length === 0) {
@@ -2410,6 +2450,20 @@ async function checkMissingRecords(evt) {
     if (hideBtn) hideBtn.style.display = 'inline-block'; 
     area.innerHTML = `<div class="p-2 text-center text-danger"><div class="spinner-border spinner-border-sm me-2"></div>Hiányzók keresése (${monthVal})...</div>`;
 
+    // DÁTUM NORMATIZÁLÓ SEGÉDFÜGGVÉNY (YYYY-MM-DD)
+    const toStandardDate = (dStr) => {
+      if (!dStr) return '';
+      let s = String(dStr).split('T')[0].trim().replace(/\./g, '-').replace(/\s+/g, '');
+      if (s.endsWith('-')) s = s.slice(0, -1);
+      const parts = s.split('-').map(p => parseInt(p, 10));
+      if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+        let y = parts[0], monthNum = parts[1], dayNum = parts[2];
+        if (y < 100) y += 2000;
+        return `${y}-${String(monthNum).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+      }
+      return s;
+    };
+
     try {
       const today = new Date();
       today.setHours(12, 0, 0, 0);
@@ -2446,6 +2500,7 @@ async function checkMissingRecords(evt) {
       const startDateStr = `${monthVal}-01`;
       const endDateStr = `${endY}-${endM}-${endD}`;
       
+      // 1. WORK_LOGS LEKÉRÉSE PAGINÁLVA
       let allLogs = [], logFrom = 0, step = 1000;
       while (true) {
         const { data: chunk, error: logErr } = await supabaseClient
@@ -2461,6 +2516,7 @@ async function checkMissingRecords(evt) {
         logFrom += step;
       }
 
+      // 2. LEAVE_REQUESTS LEKÉRÉSE PAGINÁLVA
       let allLeaves = [], leaveFrom = 0;
       while (true) {
         const { data: chunk, error: leaveErr } = await supabaseClient
@@ -2482,20 +2538,62 @@ async function checkMissingRecords(evt) {
         return isApproved && !isHO;
       });
 
+      // 3. DUPLA PÁROSÍTÁSI TÉRKÉP FELÉPÍTÉSE (E-MAIL ÉS NÉV ALAPJÁN IS)
+      const profileLookup = {};
       const logsByEmailMap = {};
-      allLogs.forEach(l => {
-        const email = cleanEmail(l.user_email);
-        if (email) { (logsByEmailMap[email] = logsByEmailMap[email] || []).push(l); }
+      const leavesByEmailMap = {};
+
+      (profiles || []).forEach(p => {
+        const pEmail = cleanEmail(p.email);
+        const pName = typeof normalizeStr === 'function' ? normalizeStr(p.nev) : String(p.nev || '').toLowerCase().trim();
+        
+        if (pEmail) {
+          profileLookup[pEmail] = pEmail;
+          logsByEmailMap[pEmail] = [];
+          leavesByEmailMap[pEmail] = [];
+        }
+        if (pName) {
+          profileLookup[pName] = pEmail;
+        }
       });
 
-      const leavesByEmailMap = {};
+      const isAbsenceLog = (l) => {
+        const txt = typeof normalizeStr === 'function'
+          ? normalizeStr(`${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`)
+          : `${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`.toLowerCase();
+        return txt.includes('tavollet') || txt.includes('szabadsag') || txt.includes('beteg');
+      };
+
+      allLogs.forEach(l => {
+        if (isAbsenceLog(l)) return; // Távollétek kiszűrése a work_logs-ból
+
+        const lEmail = cleanEmail(l.user_email);
+        const lName = typeof normalizeStr === 'function' ? normalizeStr(l.nev) : String(l.nev || '').toLowerCase().trim();
+
+        const targetEmail = (lEmail && profileLookup[lEmail]) 
+          ? profileLookup[lEmail] 
+          : (lName ? profileLookup[lName] : null);
+
+        if (targetEmail && logsByEmailMap[targetEmail]) {
+          logsByEmailMap[targetEmail].push(l);
+        }
+      });
+
       approvedLeaves.forEach(lr => {
-        const email = cleanEmail(lr.user_email || lr.email);
-        if (email) { (leavesByEmailMap[email] = leavesByEmailMap[email] || []).push(lr); }
+        const lrEmail = cleanEmail(lr.user_email || lr.email);
+        const lrName = typeof normalizeStr === 'function' ? normalizeStr(lr.nev) : String(lr.nev || '').toLowerCase().trim();
+
+        const targetEmail = (lrEmail && profileLookup[lrEmail]) 
+          ? profileLookup[lrEmail] 
+          : (lrName ? profileLookup[lrName] : null);
+
+        if (targetEmail && leavesByEmailMap[targetEmail]) {
+          leavesByEmailMap[targetEmail].push(lr);
+        }
       });
 
       const missingReport = {};
-      const cleanHolidays = (typeof holidayDates !== 'undefined' ? holidayDates : []).map(h => typeof normalizeDateStr === 'function' ? normalizeDateStr(h) : cleanEmail(h));
+      const cleanHolidays = (typeof holidayDates !== 'undefined' ? holidayDates : []).map(h => toStandardDate(h));
       
       (profiles || []).forEach(p => {
         const statuszRaw = p.statusz ? String(p.statusz).toLowerCase().trim() : 'aktív';
@@ -2514,8 +2612,8 @@ async function checkMissingRecords(evt) {
         let missingDays = [];
         let currentD = new Date(parseInt(yr, 10), parseInt(mo, 10) - 1, 1, 12, 0, 0);
         
-        const belepStr = cleanEmail(p.belepett);
-        const kilepStr = cleanEmail(p.kilepett);
+        const belepStr = toStandardDate(p.belepett);
+        const kilepStr = toStandardDate(p.kilepett);
 
         while (currentD <= lastDayToCheck) {
           const dY = currentD.getFullYear();
@@ -2533,12 +2631,12 @@ async function checkMissingRecords(evt) {
           const isHoliday = cleanHolidays.includes(dateStr);
           
           if (!isSunday && !isHoliday) {
-            const dayLogs = pLogs.filter(l => cleanEmail(l.datum) === dateStr);
+            const dayLogs = pLogs.filter(l => toStandardDate(l.datum) === dateStr);
             let dayTotal = dayLogs.reduce((sum, l) => sum + (Number(l.oraszam) || 0), 0);
 
             const dayLeaves = pLeaves.filter(req => {
-              const start = cleanEmail(req.kezdo_datum || req.datum || req.start_date);
-              const end = cleanEmail(req.veg_datum || req.kezdo_datum || req.datum || req.end_date);
+              const start = toStandardDate(req.kezdo_datum || req.datum || req.start_date);
+              const end = toStandardDate(req.veg_datum || req.kezdo_datum || req.datum || req.end_date);
               return dateStr >= start && dateStr <= end;
             });
 
@@ -4026,7 +4124,97 @@ function safeSetGlobalLoading(isLoading, message) {
     return 'ALL';
   }
 
+
+// CSAPAT STATISZTIKA ALFÜLEK (PILLS) BEAKADÁSMENTES VÁLTÓJA
+function fixTeamStatPills() {
+  const pillButtons = document.querySelectorAll('#teamStatPills button');
+  if (!pillButtons || pillButtons.length === 0) return;
+
+  pillButtons.forEach(btn => {
+    if (btn.dataset.pillBound) return; // Többszörös kötés elkerülése
+    btn.dataset.pillBound = 'true';
+
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+
+      // 1. Összes alfül gomb inaktiválása
+      pillButtons.forEach(b => {
+        b.classList.remove('active');
+        b.setAttribute('aria-selected', 'false');
+      });
+
+      // 2. Összes panel inaktiválása és elrejtése (fehér sávok nélkül)
+      const allPanes = document.querySelectorAll('#team-stat-tab .tab-pane');
+      allPanes.forEach(pane => {
+        pane.classList.remove('active', 'show');
+        pane.style.setProperty('display', 'none', 'important');
+      });
+
+      // 3. Kiválasztott gomb és a hozzá tartozó panel aktiválása
+      this.classList.add('active');
+      this.setAttribute('aria-selected', 'true');
+
+      const targetSelector = this.getAttribute('data-bs-target');
+      if (targetSelector) {
+        const targetPane = document.querySelector(targetSelector);
+        if (targetPane) {
+          targetPane.classList.add('active', 'show');
+          targetPane.style.setProperty('display', 'block', 'important');
+        }
+      }
+    });
+  });
+}
+
  async function initTeamStatTab() {
+  // 1. ALFÜLEK VÁLTÓGOMBJAIT FIGYELŐ BIZTONSÁGI BINDING (BEAKADÁS ÉS CSÚSZÁS ELLEN)
+  const pillButtons = document.querySelectorAll('#teamStatPills button');
+  pillButtons.forEach(btn => {
+    if (!btn.dataset.pillBound) {
+      btn.dataset.pillBound = 'true';
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        
+        pillButtons.forEach(b => {
+          b.classList.remove('active');
+          b.setAttribute('aria-selected', 'false');
+        });
+
+        document.querySelectorAll('#team-stat-tab .tab-pane').forEach(pane => {
+          pane.classList.remove('active', 'show', 'fade');
+          pane.style.setProperty('display', 'none', 'important');
+        });
+
+        this.classList.add('active');
+        this.setAttribute('aria-selected', 'true');
+
+        const targetSelector = this.getAttribute('data-bs-target');
+        if (targetSelector) {
+          const targetPane = document.querySelector(targetSelector);
+          if (targetPane) {
+            targetPane.classList.add('active', 'show');
+            targetPane.style.setProperty('display', 'block', 'important');
+          }
+        }
+      });
+    }
+  });
+
+  // 2. KEZDŐÁLLAPOT TISZTÍTÁSA: CSAK A TÉNYLEGESEN AKTÍV ALFÜL LÁTSZÓDJON
+  const activePill = document.querySelector('#teamStatPills button.active');
+  const activeTarget = activePill ? activePill.getAttribute('data-bs-target') : '#pill-employee';
+
+  document.querySelectorAll('#team-stat-tab .tab-pane').forEach(pane => {
+    pane.classList.remove('fade');
+    if ('#' + pane.id === activeTarget) {
+      pane.classList.add('active', 'show');
+      pane.style.setProperty('display', 'block', 'important');
+    } else {
+      pane.classList.remove('active', 'show');
+      pane.style.setProperty('display', 'none', 'important');
+    }
+  });
+
   const d = new Date();
   const defaultMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   
@@ -4126,7 +4314,7 @@ function safeSetGlobalLoading(isLoading, message) {
       groupSelect.value = userGroupCode;
       groupSelect.disabled = true;
     } else {
-      groupSelect.value = 'ALL'; // Admin esetén alapértelmezetten az ÖSSZES csoportkódot mutatja
+      groupSelect.value = 'ALL';
     }
   }
 
@@ -4215,6 +4403,21 @@ async function onTsCreGroupChange() {
   resContainer.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary spinner-border-sm me-2"></div>Adatok lekérése...</div>';
 
   try {
+    // 0. Projektek törzsadat térkép felépítése a Vevő és Munka nevének pótlásához
+    if ((!window.allProjectsForStats || window.allProjectsForStats.length === 0) && typeof loadMasterProjects === 'function') {
+      await loadMasterProjects();
+    }
+
+    const masterList = (window.allProjectsForStats && window.allProjectsForStats.length > 0)
+      ? window.allProjectsForStats
+      : (window.allMasterProjects || []);
+
+    const projMap = {};
+    masterList.forEach(p => {
+      const key = typeof cleanJobId === 'function' ? cleanJobId(p.id) : String(p.id || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (key) projMap[key] = p;
+    });
+
     if (typeof tsProfilesData === 'undefined' || !tsProfilesData || tsProfilesData.length === 0) {
       const { data: profData } = await supabaseClient.from('profiles').select('*');
       window.tsProfilesData = profData || [];
@@ -4251,16 +4454,12 @@ async function onTsCreGroupChange() {
       }
     }
 
-    // 2. Leave_requests lekérése - JAVÍTVA: KIZÁRÓLAG user_email ÉS nev HASZNÁLATÁVAL (NINCS email OSZLOP)
+    // 2. Leave_requests lekérése
     let userLeavesRaw = [];
     const leaveTerms = [];
 
-    if (targetEmail) {
-      leaveTerms.push(`user_email.ilike.%${targetEmail}%`);
-    }
-    if (nameWords.length > 0) {
-      leaveTerms.push(`nev.ilike.%${nameWords[0]}%`);
-    }
+    if (targetEmail) leaveTerms.push(`user_email.ilike.%${targetEmail}%`);
+    if (nameWords.length > 0) leaveTerms.push(`nev.ilike.%${nameWords[0]}%`);
 
     if (leaveTerms.length > 0) {
       let leaveFrom = 0, step = 1000;
@@ -4382,15 +4581,23 @@ async function onTsCreGroupChange() {
       const dayData = daysMap[day];
       let dayTotal = dayData.logs.reduce((sum, l) => sum + (Number(l.oraszam) || 0), 0);
 
-      const logDetails = dayData.logs.map(l => `
-        <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
-          <div>
-            <strong class="text-primary">${typeof escapeHtml === 'function' ? escapeHtml(l.munkaszam) : l.munkaszam}</strong> <span class="text-muted mx-1">|</span> ${typeof escapeHtml === 'function' ? escapeHtml(l.vevo || '') : (l.vevo || '')}
-            <div class="small text-muted">${typeof escapeHtml === 'function' ? escapeHtml(l.munka || '') : (l.munka || '')}</div>
+      const logDetails = dayData.logs.map(l => {
+        const jobClean = typeof cleanJobId === 'function' ? cleanJobId(l.munkaszam) : String(l.munkaszam || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const proj = projMap[jobClean];
+        const displayVevo = proj ? (proj.vevo || '') : (l.vevo || '');
+        const displayMunka = proj ? (proj.munka || '') : (l.munka || '');
+
+        return `
+          <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+            <div>
+              <strong class="text-primary">${typeof escapeHtml === 'function' ? escapeHtml(l.munkaszam) : l.munkaszam}</strong>
+              ${displayVevo ? `<span class="text-muted mx-1">|</span> <span class="fw-semibold text-dark">${typeof escapeHtml === 'function' ? escapeHtml(displayVevo) : displayVevo}</span>` : ''}
+              <div class="small text-muted">${typeof escapeHtml === 'function' ? escapeHtml(displayMunka) : displayMunka}</div>
+            </div>
+            <div class="fw-bold text-dark">${Number(l.oraszam).toFixed(2)} óra</div>
           </div>
-          <div class="fw-bold text-dark">${Number(l.oraszam).toFixed(2)} óra</div>
-        </div>
-      `).join('');
+        `;
+      }).join('');
 
       const leaveDetails = dayData.leaves.map(l => {
         const hrs = parseLeaveHours(l, dailyLimit);
@@ -4457,7 +4664,6 @@ async function loadTsCreativeData() {
   const groupCode = groupEl ? groupEl.value : '';
   const rawJobVal = jobEl ? jobEl.value.trim() : '';
 
-  // Szabad szöveges és datalist alapú megadás támogatása ("ALL" vagy üres esetén mindent mutat)
   const selectedJob = (!rawJobVal || rawJobVal.toUpperCase() === 'ALL') ? 'ALL' : rawJobVal;
 
   if (!month || !groupCode) {
@@ -4471,7 +4677,7 @@ async function loadTsCreativeData() {
   resContainer.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary spinner-border-sm me-2"></div>Adatok lekérése...</div>';
 
   try {
-    // 1. ÖSSZES PROJEKT BETÖLTÉSE PAGINÁLVA (Supabase 1000 soros korlát feloldása)
+    // 1. ÖSSZES PROJEKT BETÖLTÉSE PAGINÁLVA
     if (!window.allProjectsForStats || window.allProjectsForStats.length === 0) {
       let allProjData = [];
       let pFrom = 0;
@@ -4500,6 +4706,12 @@ async function loadTsCreativeData() {
     const masterList = (window.allProjectsForStats && window.allProjectsForStats.length > 0) 
       ? window.allProjectsForStats 
       : (window.allMasterProjects || []);
+
+    const projMap = {};
+    masterList.forEach(p => {
+      const key = typeof cleanJobId === 'function' ? cleanJobId(p.id) : String(p.id || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (key) projMap[key] = p;
+    });
 
     if (!window.tsProfilesData || window.tsProfilesData.length === 0) {
       const { data: profData } = await supabaseClient.from('profiles').select('*');
@@ -4564,7 +4776,7 @@ async function loadTsCreativeData() {
 
     if (reqId !== window.currentCreativeReqId) return;
 
-    // 4. Csoportkód és Munkaszám szűrése (kereshető/részleges egyezéssel)
+    // 4. Csoportkód és Munkaszám szűrése
     const normSelectedGroup = typeof normalizeGroupCode === 'function' ? normalizeGroupCode(groupCode) : groupCode.toUpperCase();
 
     let matchingProjects = masterList;
@@ -4671,15 +4883,24 @@ async function loadTsCreativeData() {
         const logs = userObj.days[day];
         const dayTotal = logs.reduce((sum, l) => sum + (Number(l.oraszam) || 0), 0);
 
-        const logsHtml = logs.map(l => `
-          <div class="d-flex justify-content-between text-muted ms-3 mb-1" style="font-size: 0.8rem; border-left: 2px solid #cbd5e1; padding-left: 10px;">
-            <span class="text-truncate pe-2" title="${typeof escapeHtml === 'function' ? escapeHtml(l.munkaszam) : l.munkaszam} - ${typeof escapeHtml === 'function' ? escapeHtml(l.vevo || '') : (l.vevo || '')}">
-              <strong class="text-secondary">${typeof escapeHtml === 'function' ? escapeHtml(l.munkaszam) : l.munkaszam}</strong> <span class="mx-1">|</span> ${typeof escapeHtml === 'function' ? escapeHtml(l.vevo || '') : (l.vevo || '')} <br>
-              <small style="font-size:0.75rem;">${typeof escapeHtml === 'function' ? escapeHtml(l.munka || '') : (l.munka || '')}</small>
-            </span>
-            <span class="fw-bold text-dark flex-shrink-0">${Number(l.oraszam).toFixed(2)} óra</span>
-          </div>
-        `).join('');
+        const logsHtml = logs.map(l => {
+          const jobClean = typeof cleanJobId === 'function' ? cleanJobId(l.munkaszam) : String(l.munkaszam || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const proj = projMap[jobClean];
+          const displayVevo = proj ? (proj.vevo || '') : (l.vevo || '');
+          const displayMunka = proj ? (proj.munka || '') : (l.munka || '');
+
+          return `
+            <div class="d-flex justify-content-between text-muted ms-3 mb-1" style="font-size: 0.8rem; border-left: 2px solid #cbd5e1; padding-left: 10px;">
+              <span class="text-truncate pe-2" title="${typeof escapeHtml === 'function' ? escapeHtml(l.munkaszam) : l.munkaszam} - ${typeof escapeHtml === 'function' ? escapeHtml(displayVevo) : displayVevo}">
+                <strong class="text-secondary">${typeof escapeHtml === 'function' ? escapeHtml(l.munkaszam) : l.munkaszam}</strong> 
+                ${displayVevo ? `<span class="mx-1">|</span> <span class="fw-semibold text-dark">${typeof escapeHtml === 'function' ? escapeHtml(displayVevo) : displayVevo}</span>` : ''} 
+                <br>
+                <small style="font-size:0.75rem;">${typeof escapeHtml === 'function' ? escapeHtml(displayMunka) : displayMunka}</small>
+              </span>
+              <span class="fw-bold text-dark flex-shrink-0">${Number(l.oraszam).toFixed(2)} óra</span>
+            </div>
+          `;
+        }).join('');
 
         daysHtml += `
           <div class="mb-3">
