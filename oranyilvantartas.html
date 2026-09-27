@@ -1235,6 +1235,7 @@
       const { error } = await supabaseClient
         .from('work_logs')
         .insert([{
+          profile_id: currentUserProfile?.id || null, // 🎯 PROFIL AZONOSÍTÓ BEÉPÍTVE
           user_email: cleanEmail(currentUserProfile.email),
           nev: currentUserProfile.nev,
           pozicio: currentUserProfile.pozicio || "",
@@ -1259,7 +1260,7 @@
     } finally { 
       if (btn) { btn.disabled = false; }
     }
-  }
+}
 
   async function isWithinAllowedLoggingWindow(targetDateStr) {
     if (!targetDateStr) return false;
@@ -1397,26 +1398,80 @@
          }
       }
 
-      if (!isAllowed) {
-         let isPending = false;
-         try {
-           const { data: pendingReqs } = await supabaseClient
-             .from('requests')
-             .select('id, status')
-             .eq('user_email', emailClean)
-             .eq('datum', normalizedDv)
-             .or('status.eq.pending_level1,status.eq.pending_admin,status.eq.pending,status.eq.Függőben');
-           if (pendingReqs && pendingReqs.length > 0) isPending = true;
-         } catch(err) { console.error(err); }
+      // 🎯 1. KIFIZETÉSI ZÁROLÁS (overtime_decisions) ÉS NYITÁSI KÉRELMEK (requests) LEKÉRDEZÉSE
+      let isPending = false;
+      let isPayoutLocked = false;
 
+      try {
+        const [payoutRes, reqsRes] = await Promise.all([
+          supabaseClient
+            .from('overtime_decisions')
+            .select('*')
+            .ilike('user_email', emailClean),
+          supabaseClient
+            .from('requests')
+            .select('id, status')
+            .ilike('user_email', emailClean)
+            .eq('datum', normalizedDv)
+        ]);
+
+        // A) Túlmunka kifizetési döntések ellenőrzése az overtime_decisions táblában
+        if (payoutRes.data && payoutRes.data.length > 0) {
+          const matchingPayouts = payoutRes.data.filter(p => {
+            const pDate = String(p.datum || p.date || p.month || '').substring(0, 10);
+            const st = String(p.status || p.decision || '').toLowerCase().trim();
+            const isRejected = ['rejected', 'elutasitva', 'cancelled', 'visszavont'].includes(st);
+
+            // Dátum egyezés vizsgálata (konkrét nap YYYY-MM-DD vagy hónap YYYY-MM)
+            const dateMatches = pDate === normalizedDv || normalizedDv.startsWith(pDate);
+            return dateMatches && !isRejected;
+          });
+
+          if (matchingPayouts.length > 0) {
+            isPayoutLocked = true;
+          }
+        }
+
+        // B) Nyitási kérelem státuszának ellenőrzése a requests táblában
+        if (reqsRes.data && reqsRes.data.length > 0) {
+          const pendingStatuses = ['pending_level1', 'pending_admin', 'pending', 'függőben'];
+          isPending = reqsRes.data.some(r => pendingStatuses.includes(String(r.status || '').toLowerCase().trim()));
+        }
+      } catch(err) { console.error("Zárolás ellenőrzési hiba:", err); }
+
+      // Segédfüggvény az űrlap elemek letiltásához / engedélyezéséhez
+      const toggleFormState = (enable) => {
+        const pointerVal = enable ? 'auto' : 'none';
+        const opacityVal = enable ? '1' : '0.4';
+
+        const wf = document.getElementById('workForm');
+        if (wf) { wf.style.pointerEvents = pointerVal; wf.style.opacity = opacityVal; }
+
+        const fa = document.getElementById('favoritesArea');
+        if (fa) { fa.style.pointerEvents = pointerVal; fa.style.opacity = opacityVal; }
+
+        const sh = document.querySelector('.search-box-highlight');
+        if (sh) { sh.style.pointerEvents = pointerVal; sh.style.opacity = opacityVal; }
+      };
+
+      // 🎯 2. BANNER ÉS ŰRLAP ÁLLAPOT BEÁLLÍTÁSA A KIFIZETÉSI VAGY NAPI ZÁROLÁS ALAPJÁN
+      if (isPayoutLocked) {
+         lockAlert.innerHTML = `
+           <div class="alert alert-info py-2 mb-3 small d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 border-start border-4 border-info shadow-sm">
+             <span><i class="bi bi-cash-stack me-1"></i> <strong>Erre a napra (${normalizedDv}) a túlmunka kifizetésre lett küldve / kifizetve.</strong> Az órák módosítása zárolva van.</span>
+             <span class="badge bg-info text-dark py-1.5 px-3 fs-6"><i class="bi bi-lock-fill me-1"></i>Kifizetésre elküldve</span>
+           </div>`;
+         lockAlert.style.display = 'block';
+         toggleFormState(false);
+      } else if (!isAllowed) {
          if (isPending) {
-           lockAlert.innerHTML = `
+            lockAlert.innerHTML = `
              <div class="alert alert-warning py-2 mb-3 small d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 border-start border-4 border-warning shadow-sm">
                <span><i class="bi bi-clock-history me-1"></i> <strong>A nyitási kérelem erre a napra (${normalizedDv}) elbírálás alatt van.</strong></span>
                <span class="badge bg-warning text-dark py-1.5 px-3 fs-6"><i class="bi bi-hourglass-split me-1"></i>Függőben</span>
              </div>`;
          } else {
-           lockAlert.innerHTML = `
+            lockAlert.innerHTML = `
              <div class="alert alert-danger py-2 mb-3 small d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 border-start border-4 border-danger shadow-sm">
                <span><i class="bi bi-lock-fill me-1"></i> <strong>Ez a nap lezárt (${normalizedDv}).</strong> Rögzítéshez nyitási kérelmet kell beküldened!</span>
                <button class="btn btn-sm btn-warning fw-bold py-1 px-3 text-dark text-nowrap" onclick="openRequestModal('${normalizedDv}')">
@@ -1425,37 +1480,13 @@
              </div>`;
          }
          lockAlert.style.display = 'block';
-         
-         if(document.getElementById('workForm')) {
-             document.getElementById('workForm').style.pointerEvents = 'none';
-             document.getElementById('workForm').style.opacity = '0.4';
-         }
-         if(document.getElementById('favoritesArea')) {
-             document.getElementById('favoritesArea').style.pointerEvents = 'none';
-             document.getElementById('favoritesArea').style.opacity = '0.4';
-         }
-         const searchHighlight = document.querySelector('.search-box-highlight');
-         if(searchHighlight) {
-             searchHighlight.style.pointerEvents = 'none';
-             searchHighlight.style.opacity = '0.4';
-         }
+         toggleFormState(false);
       } else {
          lockAlert.style.display = 'none';
-         if(document.getElementById('workForm')) {
-             document.getElementById('workForm').style.pointerEvents = 'auto';
-             document.getElementById('workForm').style.opacity = '1';
-         }
-         if(document.getElementById('favoritesArea')) {
-             document.getElementById('favoritesArea').style.pointerEvents = 'auto';
-             document.getElementById('favoritesArea').style.opacity = '1';
-         }
-         const searchHighlight = document.querySelector('.search-box-highlight');
-         if(searchHighlight) {
-             searchHighlight.style.pointerEvents = 'auto';
-             searchHighlight.style.opacity = '1';
-         }
+         toggleFormState(true);
       }
 
+      // 🎯 3. WORK_LOGS ÉS LEAVE_REQUESTS LEKÉRDEZÉSE
       const [logsRes, leaveRes] = await Promise.all([
         supabaseClient.from('work_logs').select('*').ilike('user_email', emailClean).eq('datum', normalizedDv),
         supabaseClient.from('leave_requests').select('*').ilike('user_email', emailClean)
@@ -1489,11 +1520,16 @@
 
       const filteredLogs = (logsRes.data || []).filter(l => !isAbsenceLog(l));
 
+      // 🎯 PONTOS CSOPORTOSÍTÁS: Az éjszakai és hétvégi jelölőket is beemeljük az összevonási kulcsba
       const groupedMap = {};
       filteredLogs.forEach(item => {
-        const key = `${item.munkaszam}_${item.vevo || ''}_${item.munka || ''}`;
+        const isNight = item.ejszakai_esemeny === true || String(item.ejszakai_esemeny).toLowerCase() === 'true';
+        const isWeekend = item.hetvegi_esemeny === true || String(item.hetvegi_esemeny).toLowerCase() === 'true';
+
+        const key = `${item.munkaszam}_${item.vevo || ''}_${item.munka || ''}_night:${isNight}_wnd:${isWeekend}`;
+        
         if (!groupedMap[key]) {
-          groupedMap[key] = { ...item, oraszam: 0, extraIds: [] };
+          groupedMap[key] = { ...item, oraszam: 0, extraIds: [], isNight, isWeekend };
         } else {
           groupedMap[key].extraIds.push(item.id);
         }
@@ -1503,8 +1539,25 @@
       const logs = Object.values(groupedMap);
       let dailyTotal = logs.reduce((sum, item) => sum + item.oraszam, 0);
 
+      // 🎯 4. SZERKESZTÉSI JOG: Csak akkor szerkeszthető, ha megengedett az időablak ÉS NINCS kifizetési zárolás
+      const canEdit = isAllowed && !isPayoutLocked;
+
       let htmlItems = logs.map(i => {
         const allIds = [i.id, ...i.extraIds].join(',');
+
+        // Különleges esemény jelvények megjelenítése
+        let typeBadge = '';
+        if (i.isNight) {
+          typeBadge += `<span class="badge bg-dark text-warning border border-warning ms-1" style="font-size: 0.7rem;"><i class="bi bi-moon-stars me-1"></i>Éjszakai</span>`;
+        }
+        if (i.isWeekend) {
+          typeBadge += `<span class="badge bg-primary-subtle text-primary border border-primary-subtle ms-1" style="font-size: 0.7rem;"><i class="bi bi-calendar-event me-1"></i>Hétvégi</span>`;
+        }
+
+        const lockMsg = isPayoutLocked 
+          ? 'Ez a túlmunka már kifizetésre lett küldve, így az órák nem módosíthatók!' 
+          : 'Ez a nap már lezárt. Módosításhoz nyitási kérelmet kell beküldened!';
+
         return `
           <div class="d-flex justify-content-between align-items-center py-2 mb-1 border-bottom">
             <div class="flex-grow-1 min-w-0 pe-2">
@@ -1512,6 +1565,7 @@
                 <strong class="text-primary">${escapeHtml(i.munkaszam)}</strong> 
                 <span class="text-muted mx-1">|</span> 
                 <span class="text-dark">${escapeHtml(i.vevo || "")}</span>
+                ${typeBadge}
               </div>
               <div class="text-muted small text-truncate" style="margin-top: -2px; font-size: 0.8rem;">
                 ${escapeHtml(i.munka || "Nincs megnevezés")}
@@ -1519,15 +1573,15 @@
             </div>
             <div class="d-flex align-items-center justify-content-end flex-shrink-0 ms-1 gap-2" style="white-space: nowrap;">
               <strong style="font-size: 0.9rem;" class="me-1">${Number(i.oraszam).toFixed(2)}</strong>
-              ${isAllowed ? `
-              <button class="btn btn-sm btn-link text-info p-1 m-0 text-decoration-none" onclick="promptEditHour('${allIds}', '${i.munkaszam}', ${i.oraszam})" title="Szerkesztés">
+              ${canEdit ? `
+              <button class="btn btn-sm btn-link text-info p-1 m-0 text-decoration-none" onclick="promptEditHour('${allIds}', '${i.munkaszam}',${i.oraszam})" title="Szerkesztés">
                 <i class="bi bi-pencil fs-6"></i>
               </button>
               <button class="btn btn-sm btn-link text-danger p-1 m-0 text-decoration-none" onclick="deleteEntry('${allIds}', '${i.munkaszam}')" title="Törlés">
                 <i class="bi bi-trash fs-6"></i>
               </button>
               ` : `
-              <button class="btn btn-sm btn-link text-secondary p-1 m-0 text-decoration-none" onclick="showModal('Ez a nap már lezárt. Módosításhoz nyitási kérelmet kell beküldened!', 'Zárt nap')" title="Lezárt nap">
+              <button class="btn btn-sm btn-link text-secondary p-1 m-0 text-decoration-none" onclick="showModal('${lockMsg}', '${isPayoutLocked ? 'Kifizetett túlmunka' : 'Zárt nap'}')" title="Zárolt sor">
                 <i class="bi bi-lock-fill fs-6"></i>
               </button>
               `}
@@ -1687,12 +1741,14 @@
       const mainId = ids[0];
       const extraIds = ids.slice(1);
 
-      const { error } = await supabaseClient.from('work_logs').update({ oraszam: newHours }).eq('id', mainId);
-      if (error) throw error;
+      // 🎯 ATOMI ADATBÁZIS MŰVELET: Egyetlen tranzakcióban fut le a frissítés és a törlés (megelőzve a megduplázódást)
+      const { error } = await supabaseClient.rpc('update_work_log_atomic', {
+        p_main_id: mainId,
+        p_new_hours: newHours,
+        p_extra_ids: extraIds.length > 0 ? extraIds : null
+      });
 
-      if (extraIds.length > 0) {
-        await supabaseClient.from('work_logs').delete().in('id', extraIds);
-      }
+      if (error) throw error;
 
       closeEditModal();
       showModal("Óraszám sikeresen frissítve!", "Siker");
@@ -1704,10 +1760,10 @@
       if (typeof safeSetGlobalLoading === 'function') {
         safeSetGlobalLoading(false);
       } else if (typeof setGlobalLoading === 'function') {
-        setGlobalLoading(false);
+        safeSetGlobalLoading(false);
       }
     }
-  }
+}
 
   function toggleSearchUI() {
     const t = document.querySelector('input[name="searchType"]:checked').value;
@@ -1811,62 +1867,84 @@ async function getClientYearlyReportFromSupabase(clientName) {
 }
 
   async function buildReportObject(logs, clientName, projectName, fileNameBase) {
-    if (!logs || logs.length === 0) {
-      return { clientName, projectName, totalHours: 0, monthlyBreakdown: [], csvData: [], fileName: fileNameBase + ".csv" };
-    }
-
-    const emails = [...new Set(logs.map(l => l.user_email).filter(Boolean))];
-    let profileMap = {};
-    if (emails.length > 0) {
-      const { data: profiles, error } = await supabaseClient.from('profiles').select('email, csoport, pozicio').in('email', emails);
-      if (!error && profiles) {
-        profiles.forEach(p => profileMap[p.email] = p);
-      }
-    }
-
-    const aggregated = {};
-    let grandTotal = 0;
-
-    logs.forEach(log => {
-      const month = log.honap || "Ismeretlen";
-      const email = log.user_email;
-      const name = log.nev || email || "Ismeretlen";
-      const pos = log.pozicio || (profileMap[email] ? profileMap[email].pozicio : "Munkatárs");
-      const team = (profileMap[email] ? profileMap[email].csoport : "Egyéb") || "Egyéb";
-      const hours = parseFloat(log.oraszam) || 0;
-
-      if (!aggregated[month]) aggregated[month] = { total: 0, teams: {} };
-      if (!aggregated[month].teams[team]) aggregated[month].teams[team] = {};
-      if (!aggregated[month].teams[team][name]) aggregated[month].teams[team][name] = { pos, hours: 0 };
-
-      aggregated[month].teams[team][name].hours += hours;
-      aggregated[month].total += hours;
-      grandTotal += hours;
-    });
-
-    const monthlyBreakdown = Object.keys(aggregated).sort((a, b) => b.localeCompare(a)).map(m => {
-      const teamsObj = aggregated[m].teams;
-      const teamsList = Object.keys(teamsObj).sort().map(t => {
-        const workersObj = teamsObj[t];
-        const workerList = Object.keys(workersObj).sort().map(w => ({
-          name: w, pos: workersObj[w].pos, hours: workersObj[w].hours
-        }));
-        return { teamName: t, workerList };
-      });
-      return { month: m, total: aggregated[m].total, teamsList };
-    });
-
-    const csvData = [];
-    monthlyBreakdown.forEach(m => {
-      m.teamsList.forEach(t => {
-        t.workerList.forEach(w => {
-          csvData.push([m.month, clientName, projectName || "", t.teamName, w.name, w.pos, w.hours]);
-        });
-      });
-    });
-
-    return { clientName, projectName, totalHours: grandTotal, fileName: fileNameBase + ".csv", csvData, monthlyBreakdown };
+  if (!logs || logs.length === 0) {
+    return { clientName, projectName, totalHours: 0, monthlyBreakdown: [], csvData: [], workerGrandTotals: {}, fileName: fileNameBase + ".csv" };
   }
+
+  const emails = [...new Set(logs.map(l => l.user_email).filter(Boolean))];
+  let profileMap = {};
+  if (emails.length > 0) {
+    const { data: profiles, error } = await supabaseClient.from('profiles').select('email, csoport, pozicio').in('email', emails);
+    if (!error && profiles) {
+      profiles.forEach(p => profileMap[p.email] = p);
+    }
+  }
+
+  const aggregated = {};
+  let grandTotal = 0;
+  
+  // 🎯 Munkatársankénti hiánytalan összegző
+  const workerGrandTotals = {};
+
+  logs.forEach(log => {
+    const month = log.honap || "Ismeretlen";
+    const email = log.user_email;
+    const name = log.nev || email || "Ismeretlen";
+    const pos = log.pozicio || (profileMap[email] ? profileMap[email].pozicio : "Munkatárs");
+    const team = (profileMap[email] ? profileMap[email].csoport : "Egyéb") || "Egyéb";
+    const hours = parseFloat(log.oraszam) || 0;
+
+    // Havi aggregáció
+    if (!aggregated[month]) aggregated[month] = { total: 0, teams: {} };
+    if (!aggregated[month].teams[team]) aggregated[month].teams[team] = {};
+    if (!aggregated[month].teams[team][name]) aggregated[month].teams[team][name] = { pos, hours: 0 };
+
+    aggregated[month].teams[team][name].hours += hours;
+    aggregated[month].total += hours;
+    
+    // 🎯 Teljes időszaki összesítés minden egyedi dolgozóra
+    if (!workerGrandTotals[name]) {
+      workerGrandTotals[name] = { pos: pos || "Munkatárs", hours: 0 };
+    }
+    workerGrandTotals[name].hours += hours;
+    if (pos && pos !== "Munkatárs" && workerGrandTotals[name].pos === "Munkatárs") {
+      workerGrandTotals[name].pos = pos;
+    }
+    
+    grandTotal += hours;
+  });
+
+  const monthlyBreakdown = Object.keys(aggregated).sort((a, b) => b.localeCompare(a)).map(m => {
+    const teamsObj = aggregated[m].teams;
+    const teamsList = Object.keys(teamsObj).sort().map(t => {
+      const workersObj = teamsObj[t];
+      const workerList = Object.keys(workersObj).sort().map(w => ({
+        name: w, pos: workersObj[w].pos, hours: workersObj[w].hours
+      }));
+      return { teamName: t, workerList };
+    });
+    return { month: m, total: aggregated[m].total, teamsList };
+  });
+
+  const csvData = [];
+  monthlyBreakdown.forEach(m => {
+    m.teamsList.forEach(t => {
+      t.workerList.forEach(w => {
+        csvData.push([m.month, clientName, projectName || "", t.teamName, w.name, w.pos, w.hours]);
+      });
+    });
+  });
+
+  return { 
+    clientName, 
+    projectName, 
+    totalHours: grandTotal, 
+    workerGrandTotals, 
+    fileName: fileNameBase + ".csv", 
+    csvData, 
+    monthlyBreakdown 
+  };
+}
 
   function handleStatSearchInput() {
     const t = document.querySelector('input[name="searchType"]:checked').value;
@@ -1911,94 +1989,149 @@ async function getClientYearlyReportFromSupabase(clientName) {
   }
 
   function renderReport(r, type) {
-    const list = document.getElementById('mList');
-    const header = document.getElementById('projectHeader');
-    const workerFilter = document.getElementById('qWorker').value.toLowerCase().trim();
-    
-    if (!r || typeof r !== 'object') {
-      list.innerHTML = '<div class="alert alert-danger py-2">Hiba: Érvénytelen adat érkezett.</div>';
+  const list = document.getElementById('mList');
+  const header = document.getElementById('projectHeader');
+  const workerFilter = document.getElementById('qWorker').value.toLowerCase().trim();
+  
+  if (!r || typeof r !== 'object') {
+    list.innerHTML = '<div class="alert alert-danger py-2">Hiba: Érvénytelen adat érkezett.</div>';
+    return;
+  }
+
+  try {
+    const clientName = escapeHtml(r.clientName || r.client || "Ismeretlen");
+    const projectName = r.projectName ? ' - ' + escapeHtml(r.projectName) : '';
+    const totalHrs = (Number(r.totalHours) || 0).toFixed(2);
+
+    // 🎯 MUNKAVÁLLALÓI TÁBLÁZAT RENDEZÉSE ÓRA SZERINT CSÖKKENŐBEN
+    const workerTotals = r.workerGrandTotals || {};
+    const sortedWorkers = Object.keys(workerTotals)
+      .filter(w => workerFilter === "" || w.toLowerCase().includes(workerFilter))
+      .sort((a, b) => {
+        const hA = typeof workerTotals[a] === 'object' ? workerTotals[a].hours : workerTotals[a];
+        const hB = typeof workerTotals[b] === 'object' ? workerTotals[b].hours : workerTotals[b];
+        return hB - hA;
+      });
+
+    const workerRowsHtml = sortedWorkers.map(w => {
+      const item = workerTotals[w];
+      const hoursVal = (typeof item === 'object' ? item.hours : item) || 0;
+      const posVal = (typeof item === 'object' ? item.pos : '') || '';
+
+      return `
+        <tr>
+          <td class="py-1 px-3">
+            <div class="fw-bold text-dark" style="font-size: 0.82rem;">${escapeHtml(w)}</div>
+            ${posVal ? `<div class="small text-muted" style="font-size: 0.72rem; margin-top: -2px;">${escapeHtml(posVal)}</div>` : ''}
+          </td>
+          <td class="py-1 px-3 text-end align-middle" style="width: 120px;">
+            <span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle fw-bold" style="font-size: 0.8rem;">
+              ${hoursVal.toFixed(2)} óra
+            </span>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    // 🎯 JAVÍTOTT GÖRGETHETŐ KONTÉNER (overflow-hidden eltávolítva)
+    const workerBreakdownSection = sortedWorkers.length > 0 ? `
+      <div class="border-top border-primary-subtle pt-2 mt-2">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+          <small class="text-muted fw-bold text-uppercase" style="font-size: 0.68rem; letter-spacing: 0.5px;">
+            <i class="bi bi-people-fill me-1"></i> Munkatársak összórái a teljes időszakban (${sortedWorkers.length} fő)
+          </small>
+        </div>
+        <div class="bg-white rounded border border-primary-subtle shadow-sm" style="max-height: 250px; overflow-y: auto; -webkit-overflow-scrolling: touch;">
+          <table class="table table-sm table-hover align-middle mb-0">
+            <thead class="table-light sticky-top" style="z-index: 5;">
+              <tr>
+                <th class="py-1 px-3 small fw-bold text-muted">Munkatárs</th>
+                <th class="py-1 px-3 text-end small fw-bold text-muted" style="width: 120px;">Ledolgozott óra</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${workerRowsHtml}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    ` : '';
+
+    header.innerHTML = `
+      <div class="alert alert-primary p-3 mb-3 shadow-sm">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
+          <div>
+            <strong class="fs-5">${clientName}${projectName}</strong>
+            <div class="mt-1"><span class="badge bg-primary fs-6">Összesen: ${totalHrs} óra</span></div>
+          </div>
+          <div class="mt-2 mt-md-0">
+            <button class="btn btn-success btn-sm fw-bold w-100 w-md-auto" style="white-space: nowrap !important;" onclick="downloadReport()">
+              <i class="bi bi-file-earmark-csv me-1"></i> Letöltés (CSV)
+            </button>
+          </div>
+        </div>
+        ${workerBreakdownSection}
+      </div>`;
+
+    const breakdown = r.monthlyBreakdown || [];
+    if (breakdown.length === 0) {
+      list.innerHTML = '<div class="alert alert-warning py-2">Nincs megjeleníthető adat.</div>';
       return;
     }
 
-    try {
-      const clientName = escapeHtml(r.clientName || r.client || "Ismeretlen");
-      const projectName = r.projectName ? ' - ' + escapeHtml(r.projectName) : '';
-      const totalHrs = (Number(r.totalHours) || 0).toFixed(2);
+    let finalHtml = [];
 
-      header.innerHTML = `
-        <div class="alert alert-primary p-3 mb-3">
-          <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
-            <div>
-              <strong>${clientName}${projectName}</strong>
-              <div class="mt-1"><span class="badge bg-primary">Összesen: ${totalHrs} óra</span></div>
-            </div>
-            <div class="mt-2 mt-md-0">
-              <button class="btn btn-success btn-sm fw-bold w-100 w-md-auto" style="white-space: nowrap !important;" onclick="downloadReport()">
-                <i class="bi bi-file-earmark-csv me-1"></i> Letöltés (CSV)
-              </button>
-            </div>
-          </div>
-        </div>`;
+    for (const m of breakdown) {
+      let monthContentHtml = [];
+      let monthVisibleTotal = 0; 
 
-      const breakdown = r.monthlyBreakdown || [];
-      if (breakdown.length === 0) {
-        list.innerHTML = '<div class="alert alert-warning py-2">Nincs megjeleníthető adat.</div>';
-        return;
+      for (const t of (m.teamsList || [])) {
+        const filteredWorkers = (t.workerList || []).filter(w => workerFilter === "" || (w.name && w.name.toLowerCase().includes(workerFilter)));
+        if (filteredWorkers.length === 0) continue;
+
+        const workerRows = filteredWorkers.map(w => {
+          monthVisibleTotal += Number(w.hours);
+          return `<tr>
+            <td data-label="Munkatárs" class="py-1">
+              <div class="small fw-bold">${escapeHtml(w.name || "Névtelen")}</div>
+              <div class="small text-muted" style="margin-top:-2px">${escapeHtml(w.pos || "Munkatárs")}</div>
+            </td>
+            <td data-label="Óraszám" class="text-end align-middle" style="width: 80px;">
+              <span class="fw-bold">${(Number(w.hours) || 0).toFixed(2)}</span>
+            </td>
+          </tr>`;
+        }).join('');
+
+        monthContentHtml.push(`
+          <div class="mb-3"> 
+            <div class="small fw-bold text-uppercase px-2 py-1 mb-2 bg-light border-start border-4 border-primary">
+              ${escapeHtml(t.teamName || "Egyéb")}
+            </div>
+            <div class="table-container">
+              <table class="table table-sm table-hover align-middle mb-0"><tbody>${workerRows}</tbody></table>
+            </div>
+          </div>`);
       }
 
-      let finalHtml = [];
-
-      for (const m of breakdown) {
-        let monthContentHtml = [];
-        let monthVisibleTotal = 0; 
-
-        for (const t of (m.teamsList || [])) {
-          const filteredWorkers = (t.workerList || []).filter(w => workerFilter === "" || (w.name && w.name.toLowerCase().includes(workerFilter)));
-          if (filteredWorkers.length === 0) continue;
-
-          const workerRows = filteredWorkers.map(w => {
-            monthVisibleTotal += Number(w.hours);
-            return `<tr>
-              <td data-label="Munkatárs" class="py-1">
-                <div class="small fw-bold">${escapeHtml(w.name || "Névtelen")}</div>
-                <div class="small text-muted" style="margin-top:-2px">${escapeHtml(w.pos || "Munkatárs")}</div>
-              </td>
-              <td data-label="Óraszám" class="text-end align-middle" style="width: 80px;">
-                <span class="fw-bold">${(Number(w.hours) || 0).toFixed(2)}</span>
-              </td>
-            </tr>`;
-          }).join('');
-
-          monthContentHtml.push(`
-            <div class="mb-3"> 
-              <div class="small fw-bold text-uppercase px-2 py-1 mb-2 bg-light border-start border-4 border-primary">
-                ${escapeHtml(t.teamName || "Egyéb")}
-              </div>
-              <div class="table-container">
-                <table class="table table-sm table-hover align-middle mb-0"><tbody>${workerRows}</tbody></table>
-              </div>
-            </div>`);
-        }
-
-        if (monthContentHtml.length > 0) {
-          const displayTotal = workerFilter === "" ? (Number(m.total) || 0).toFixed(2) : monthVisibleTotal.toFixed(2);
-          finalHtml.push(`
-            <div class="card mb-3 shadow-sm border-0">
-              <div class="card-header bg-light py-2 px-3 d-flex justify-content-between align-items-center">
-                <span class="small fw-bold"><i class="bi bi-calendar3 me-2"></i> ${m.month}</span>
-                <span class="badge bg-primary">${displayTotal} óra</span>
-              </div>
-              <div class="card-body p-3">${monthContentHtml.join('')}</div>
-            </div>`);
-        }
+      if (monthContentHtml.length > 0) {
+        const displayTotal = workerFilter === "" ? (Number(m.total) || 0).toFixed(2) : monthVisibleTotal.toFixed(2);
+        finalHtml.push(`
+          <div class="card mb-3 shadow-sm border-0">
+            <div class="card-header bg-light py-2 px-3 d-flex justify-content-between align-items-center">
+              <span class="small fw-bold"><i class="bi bi-calendar3 me-2"></i> ${m.month}</span>
+              <span class="badge bg-primary">${displayTotal} óra</span>
+            </div>
+            <div class="card-body p-3">${monthContentHtml.join('')}</div>
+          </div>`);
       }
-
-      list.innerHTML = finalHtml.length > 0 ? finalHtml.join('') : '<div class="alert alert-light py-2">Nincs a szűrésnek megfelelő találat.</div>';
-
-    } catch (err) {
-      list.innerHTML = `<div class="alert alert-danger py-2">Hiba: ${err.message}</div>`;
     }
+
+    list.innerHTML = finalHtml.length > 0 ? finalHtml.join('') : '<div class="alert alert-light py-2">Nincs a szűrésnek megfelelő találat.</div>';
+
+  } catch (err) {
+    list.innerHTML = `<div class="alert alert-danger py-2">Hiba: ${err.message}</div>`;
   }
+}
 
   async function downloadReport() {
     if (!lastReportData || !lastReportData.csvData) return showModal("Nincs letölthető adat!", "Hiba");
@@ -2254,8 +2387,11 @@ async function getClientYearlyReportFromSupabase(clientName) {
     const startDateStr = `${m}-01`;
     const endDateStr = `${m}-${String(lastDay).padStart(2, '0')}`;
     const cleanHolidays = (typeof holidayDates !== 'undefined' ? holidayDates : []).map(h => toStandardYYYYMMDD(h));
+    
+    // 🎯 ÁTHELYEZETT MUNKANAPOK (SZOMBATOK) BEÁLLÍTÁSA
+    const cleanShiftedWorkdays = (typeof shiftedWorkdays !== 'undefined' && Array.isArray(shiftedWorkdays) ? shiftedWorkdays : ['2026-08-08']).map(s => toStandardYYYYMMDD(s));
 
-    // WORK_LOGS LEKÉRDEZÉSE (PAGINÁLVA)
+    // 1. WORK_LOGS LEKÉRDEZÉSE (DÁTUMSZŰRVE, PAGINÁLVA)
     let allLogs = [], logFrom = 0, step = 1000;
     while (true) {
       const { data: chunk, error } = await supabaseClient
@@ -2271,9 +2407,16 @@ async function getClientYearlyReportFromSupabase(clientName) {
       logFrom += step;
     }
 
+    // 2. LEAVE_REQUESTS DÁTUMSZŰRT LEKÉRDEZÉSE
     let allLeaves = [], leaveFrom = 0;
     while (true) {
-      const { data: chunk, error } = await supabaseClient.from('leave_requests').select('*').range(leaveFrom, leaveFrom + step - 1);
+      const { data: chunk, error } = await supabaseClient
+        .from('leave_requests')
+        .select('*')
+        .or(`veg_datum.gte.${startDateStr},and(veg_datum.is.null,kezdo_datum.gte.${startDateStr})`)
+        .lte('kezdo_datum', endDateStr)
+        .range(leaveFrom, leaveFrom + step - 1);
+
       if (error) throw error;
       if (chunk && chunk.length > 0) allLeaves.push(...chunk);
       if (!chunk || chunk.length < step) break;
@@ -2307,7 +2450,6 @@ async function getClientYearlyReportFromSupabase(clientName) {
     });
 
     allLogs.forEach(log => {
-      // TÁVOLLÉT LOGOK KISZŰRÉSE A DUPLÁZÓDÁS MEGAPAKADÁLYOZÁSÁRA
       if (isAbsenceLog(log)) return;
 
       const logEmail = cleanEmail(log.user_email);
@@ -2348,12 +2490,12 @@ async function getClientYearlyReportFromSupabase(clientName) {
         const targetDateStr = `${m}-${String(d).padStart(2, '0')}`;
         
         if ((belepStr && targetDateStr < belepStr) || (kilepStr && targetDateStr > kilepStr)) {
-          days.push({ t: 0, d: 0, disabled: true });
+          days.push({ t: 0, d: 0, overtime: 0, disabled: true });
           continue;
         }
 
         const dayLogs = pLogs.filter(l => toStandardYYYYMMDD(l.datum) === targetDateStr);
-        let dayTotal = dayLogs.reduce((sum, l) => sum + (Number(l.oraszam) || 0), 0);
+        const dayWorkTotal = dayLogs.reduce((sum, l) => sum + (Number(l.oraszam) || 0), 0);
         const dayDowntime = dayLogs.filter(l => (l.munka && l.munka.toLowerCase().includes('állásidő')) || (l.munkaszam && l.munkaszam.toLowerCase().includes('allas'))).reduce((sum, l) => sum + (Number(l.oraszam) || 0), 0);
 
         const dayLeave = pLeaves.find(req => {
@@ -2362,15 +2504,34 @@ async function getClientYearlyReportFromSupabase(clientName) {
           return targetDateStr >= start && targetDateStr <= end;
         });
 
+        let dayTotal = dayWorkTotal;
         if (dayLeave) {
           dayTotal += getLeaveHours(dayLeave, dailyLimit);
         }
 
-        if (dayTotal > dailyLimit && !dayLeave) overtimeTotal += (dayTotal - dailyLimit);
+        // 🎯 TÚLMUNKA SZÁMÍTÁSA PONTOSAN A KÉRT SZABÁLYOK SZERINT:
+        const dt = new Date(yr, mo, d, 12, 0, 0);
+        const dayOfWeek = dt.getDay();
+        const isShiftedWorkday = cleanShiftedWorkdays.includes(targetDateStr);
+        const isWeekendDay = (dayOfWeek === 0 || dayOfWeek === 6) && !isShiftedWorkday;
+        const isHoliday = cleanHolidays.includes(targetDateStr);
+
+        let dayOvertime = 0;
+        if (isWeekendDay || isHoliday) {
+          // Hétvégén és ünnepnapon a teljes munkanaplózott óraszám túlóra
+          dayOvertime = dayWorkTotal;
+        } else {
+          // Hétköznap (és áthelyezett szombaton) a napi limit (8 óra) feletti rész számít túlórának
+          if (dayTotal > dailyLimit) {
+            dayOvertime = dayTotal - dailyLimit;
+          }
+        }
+
+        overtimeTotal += dayOvertime;
         totalHours += dayTotal;
         downtimeTotal += dayDowntime;
 
-        days.push({ t: dayTotal, d: dayDowntime });
+        days.push({ t: dayTotal, d: dayDowntime, overtime: dayOvertime });
       }
 
       let displayGroup = (p.display_csoport || p.csoport || '').trim();
@@ -2391,10 +2552,14 @@ async function getClientYearlyReportFromSupabase(clientName) {
     let dayMeta = {};
     for (let d = 1; d <= lastDay; d++) {
       let dt = new Date(yr, mo, d, 12, 0, 0), ds = `${m}-${String(d).padStart(2, '0')}`;
-      dayMeta[d] = (dt.getDay() === 0) ? "sunday-col" : (cleanHolidays.includes(ds) || dt.getDay() === 6 ? "holiday-col" : "");
+      const isShifted = cleanShiftedWorkdays.includes(ds);
+      const isSun = (dt.getDay() === 0) && !isShifted;
+      const isSatOrHol = (cleanHolidays.includes(ds) || dt.getDay() === 6) && !isShifted;
+
+      dayMeta[d] = isSun ? "sunday-col" : (isSatOrHol ? "holiday-col" : "");
     }
     
-    let html = `<div class="table-container matrix-container border rounded"><table class="table table-sm table-bordered table-striped mb-0"><thead><tr><th class="sticky-col">Név</th><th title="Havi állásidő összesen">Állás</th><th>Össz</th><th title="Havi túlmunka (limit felett)">Túl</th>`;
+    let html = `<div class="table-container matrix-container border rounded"><table class="table table-sm table-bordered table-striped mb-0"><thead><tr><th class="sticky-col">Név</th><th title="Havi állásidő összesen">Állás</th><th>Össz</th><th title="Havi túlmunka (limit felett / hétvége / ünnepnapon)">Túl</th>`;
     for (let d = 1; d <= lastDay; d++) html += `<th class="${dayMeta[d]}">${d}</th>`;
     html += `</tr></thead><tbody>`;
     
@@ -2411,7 +2576,7 @@ async function getClientYearlyReportFromSupabase(clientName) {
         <td class="sticky-col ${rowClass}"><div class="d-flex align-items-center"><i class="bi ${isLeader ? 'bi-shield-check text-primary' : 'bi-person text-secondary'} me-2"></i><span class="${isLeader ? 'fw-bold' : ''}">${escapeHtml(w.name)}</span></div></td>
         <td class="text-center text-warning fw-bold" style="background-color: #fffdf5;">${(w.downtimeTotal || 0).toFixed(1)}</td>
         <td class="text-center text-primary fw-bold">${w.totalHours.toFixed(1)}</td>
-        <td class="text-center ${w.overtime > 0 ? 'overtime-cell' : ''}">${w.overtime.toFixed(1)}</td>`;
+        <td class="text-center ${w.overtime > 0 ? 'overtime-cell fw-bold text-danger' : ''}">${w.overtime.toFixed(1)}</td>`;
       
       for (let i = 0; i < lastDay; i++) {
         const day = w.days[i];
@@ -2423,7 +2588,7 @@ async function getClientYearlyReportFromSupabase(clientName) {
         } else if (day.t > 0) {
           cellContent = `<div style="font-size: 0.75rem; font-weight: bold;">${day.t.toFixed(1)}</div>`;
           if (day.d > 0) cellContent += `<div style="font-size: 0.6rem; color: #946c00; border-top: 1px dotted #ccc; margin-top: 1px;">Á: ${day.d.toFixed(1)}</div>`;
-          if (day.t > (w.dailyLimit || 8)) cellClass += " overtime-cell";
+          if (day.overtime > 0) cellClass += " overtime-cell";
         }
         html += `<td class="text-center ${cellClass}" style="padding: 2px !important; min-width: 30px; vertical-align: middle;">${cellContent}</td>`;
       }
@@ -2938,17 +3103,45 @@ async function checkMissingRecords(evt) {
     </div>`;
   }
 
+function sanitizeHtmlContent(input) {
+  if (!input) return "";
+  const str = String(input);
+  
+  // Ha nem tartalmaz HTML tageket, visszaadjuk az eredeti szöveget
+  if (!/<[a-z][\s\S]*>/i.test(str)) {
+    return str;
+  }
+
+  // XSS szűrés HTML struktúrájú üzeneteknél (script elemek és inline event handlerek eltávolítása)
+  return str
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(/on\w+\s*=\s*["'][^"]*["']/gi, "")
+    .replace(/on\w+\s*=\s*`[^`]*`/gi, "")
+    .replace(/on\w+\s*=\s*[^\s>]+/gi, "")
+    .replace(/javascript:/gi, "");
+}
+
 function showModal(message, title = "Tájékoztatás") {
   const modalEl = document.getElementById('customModal');
   if (!modalEl) {
-    alert(title + ": " + message.replace(/<[^>]*>?/gm, ''));
+    alert(title + ": " + String(message || '').replace(/<[^>]*>?/gm, ''));
     return;
   }
 
   const titleEl = document.getElementById('modalTitle');
   const msgEl = document.getElementById('modalMsg');
+  
   if (titleEl) titleEl.textContent = title;
-  if (msgEl) msgEl.innerHTML = message;
+  
+  if (msgEl) {
+    const sanitized = sanitizeHtmlContent(message);
+    // HTML tartalom esetén fertőtlenített innerHTML-t, amúgy biztonságos textContent-et használunk
+    if (/<[a-z][\s\S]*>/i.test(message)) {
+      msgEl.innerHTML = sanitized;
+    } else {
+      msgEl.textContent = message;
+    }
+  }
 
   const footerEl = document.getElementById('modalFooter');
   if (footerEl) {
@@ -3482,6 +3675,16 @@ function safeSetGlobalLoading(isLoading, message) {
     if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).show();
   }
 
+  function closeConfirmModal() {
+  const modalEl = document.getElementById('confirmModal') || document.getElementById('customConfirmModal');
+  if (modalEl) {
+    const bsModal = bootstrap.Modal.getInstance(modalEl);
+    if (bsModal) {
+      bsModal.hide();
+    }
+  }
+}
+
   function populateSummaryMonthsDropdown() {
     const select = document.getElementById('exportMonthSelect');
     if (!select) return;
@@ -4003,24 +4206,37 @@ function safeSetGlobalLoading(isLoading, message) {
   }
 
   async function sendAutomatedEmail(toEmail, subject, bodyText, htmlBodyText) {
-    const GAS_EMAIL_URL = "https://script.google.com/macros/s/AKfycbypI53KFa8plSO_7zVR7G0EsF6sMcZthPMp4pBW6Co3ui3dGhn7p8xHgoG65zgyhTAd/exec";
+  const GAS_EMAIL_URL = "https://script.google.com/macros/s/AKfycbycePikT3E6hcNMp-hoA_fQI5UxRr5fdY2sizyGOZM5W44mkfWlnMLC8mHuHjF9YQ/exec";
+  const SECRET_TOKEN = "SPICE_HR_PORTAL_SECRET_TOKEN_2026";
 
-    try {
-      await fetch(GAS_EMAIL_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          to: toEmail, 
-          subject: subject, 
-          body: bodyText,
-          htmlBody: htmlBodyText || bodyText 
-        })
-      });
-    } catch (err) {
-      console.error("Hiba az e-mail küldésekor:", err);
+  try {
+    const response = await fetch(GAS_EMAIL_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        token: SECRET_TOKEN,
+        to: toEmail,
+        subject: subject,
+        body: bodyText,
+        htmlBody: htmlBodyText || bodyText
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Szerver válaszhiba: HTTP ${response.status}`);
     }
+
+    const resData = await response.json();
+    if (resData.status !== 'success') {
+      throw new Error(resData.message || "E-mail küldési hiba a szerveroldalon.");
+    }
+
+    return true;
+  } catch (err) {
+    console.error("Hiba az e-mail küldésekor:", err);
+    throw err; // Továbbdobjuk a hibát, hogy a hívó felület értesüljön a meghiúsulásról
   }
+}
 
   function updateTabVisibility(profile) {
     if (!profile) return;
@@ -5041,17 +5257,18 @@ function isGroupAllowedForLeader(targetGroup, userProf = null) {
   const normTarget = cleanStr(targetGroup);
   if (!normTarget) return false;
 
-  // 1. SAJÁT LÁTOTT CSOPORTOK ELLENŐRZÉSE
+  // 1. SAJÁT LÁTOTT CSOPORTOK ELLENŐRZÉSE (PONTOS Set.has EGYEZÉSSEL)
   if (rawLatott && rawLatott.toUpperCase() !== 'NULL' && rawLatott.toUpperCase() !== 'EMPTY') {
-    const allowedList = rawLatott.split(',').map(s => cleanStr(s)).filter(Boolean);
-    if (allowedList.some(allowed => normTarget === allowed || normTarget.includes(allowed) || allowed.includes(normTarget))) {
+    const allowedSet = new Set(rawLatott.split(',').map(s => cleanStr(s)).filter(Boolean));
+    if (allowedSet.has(normTarget)) {
       return true;
     }
   }
 
-  // 2. HELYETTESÍTÉSBŐL ÖRÖKÖLT (DELEGÁLT) CSOPORTOK ELLENŐRZÉSE
+  // 2. HELYETTESÍTÉSBŐL ÖRÖKÖLT (DELEGÁLT) CSOPORTOK ELLENŐRZÉSE (PONTOS Set.has EGYEZÉSSEL)
   if (window.delegatedGroups && window.delegatedGroups.length > 0) {
-    if (window.delegatedGroups.some(allowed => normTarget === allowed || normTarget.includes(allowed) || allowed.includes(normTarget))) {
+    const delegatedSet = new Set(window.delegatedGroups.map(s => cleanStr(s)).filter(Boolean));
+    if (delegatedSet.has(normTarget)) {
       return true;
     }
   }
@@ -5206,6 +5423,8 @@ async function toggleFavorite(munkaszam, event) {
     alert("Nem sikerült a kedvenc mentése. Ellenőrizd a Supabase 'user_favorites' táblát!");
   }
 }
+
+
 
 </script>
 
