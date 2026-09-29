@@ -2,7 +2,7 @@
 <html lang="hu">
 <head>
   <meta charset="UTF-8">
-  <title>Spice Óranyilvántartás</title>
+  <title>Óranyilvántartás</title>
   <base target="_top">
   
   <!-- Bootstrap 5 CSS & Icons -->
@@ -22,7 +22,7 @@
   <!-- iOS (Safari) specifikus beállítások -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Spice Óranyilvántartás">
+  <meta name="apple-mobile-web-app-title" content="Óranyilvántartás">
   <link rel="apple-touch-icon" href="/icon-192.png">
 
   <style>
@@ -1237,11 +1237,33 @@
     const isEjszakai = ejszakaiEl ? ejszakaiEl.checked : false;
 
     const fullDate = dateEl ? dateEl.value : "";
-    const jobNumber = jobEl ? jobEl.value : "";
+    const jobNumber = jobEl ? jobEl.value.trim() : "";
     const hoursVal = hoursEl ? parseFloat(hoursEl.value.replace(',', '.')) : 0;
 
     if (!fullDate || !jobNumber || !hoursVal || isNaN(hoursVal)) {
       return showModal("Hiányzó vagy érvénytelen adatok!", "Hiba");
+    }
+
+    // 🎯 MUNKASZÁM ÉRVÉNYESSÉG ELLENŐRZÉSE (PROJEKTEK ÉS ADMIN MUNKASZÁMOK)
+    const cleanTargetJob = typeof cleanJobId === 'function' ? cleanJobId(jobNumber) : jobNumber.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    const existsInProjects = (window.allMasterProjects || window.allJobs || allJobs || []).some(p => {
+      const pId = String(p.id || p.munkaszam || '').trim();
+      const pClean = typeof cleanJobId === 'function' ? cleanJobId(pId) : pId.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return pClean === cleanTargetJob || pId.toLowerCase() === jobNumber.toLowerCase();
+    });
+
+    const existsInAdmin = (window.globalAdminJobs || []).some(g => {
+      const gId = String(g.id || g.munkaszam || '').trim();
+      const gClean = typeof cleanJobId === 'function' ? cleanJobId(gId) : gId.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return gClean === cleanTargetJob || gId.toLowerCase() === jobNumber.toLowerCase();
+    });
+
+    if (!existsInProjects && !existsInAdmin) {
+      return showModal(
+        `A(z) <strong>"${escapeHtml(jobNumber)}"</strong> munkaszám nem létezik a projektek vagy az adminisztratív munkaszámok törzsadatában!<br><br>Kérlek, válassz a keresőből vagy a gyorsválasztó gombok közül.`, 
+        "Érvénytelen munkaszám"
+      );
     }
 
     const monthVal = fullDate.substring(0, 7);
@@ -2207,6 +2229,9 @@ async function getClientYearlyReportFromSupabase(clientName) {
 
       const global = (globalData || []).map(g => ({ id: g.munkaszam, vevo: g.vevo || "Belső", munka: g.munka || "" }));
 
+      // Adminisztratív munkaszámok eltárolása a mentéskori érvényesítéshez
+      window.globalAdminJobs = global;
+
       // 2. Saját kedvencek lekérése a user_favorites táblából
       const { data: userFavData } = await supabaseClient
         .from('user_favorites')
@@ -2244,7 +2269,7 @@ async function getClientYearlyReportFromSupabase(clientName) {
       });
       const recent = Array.from(recentMap.values()).slice(0, 5);
 
-      // HTML szerkezet felépítése (Teljes, hiánytalan magyarázatokkal)
+      // HTML szerkezet felépítése
       area.innerHTML = `
         <!-- ADMIN MUNKASZÁMOK -->
         <div id="globalFavSection" class="mb-3" style="${global.length > 0 ? '' : 'display:none;'}">
@@ -2356,7 +2381,7 @@ async function getClientYearlyReportFromSupabase(clientName) {
           <div id="favButtons" class="d-flex flex-column gap-1"></div>
         </div>`;
 
-      // DYNAMIC POPOVER INICIALIZÁLÁS
+      // Dynamic Popover inicializálás
       if (window.bootstrap && bootstrap.Popover) {
         const popovers = area.querySelectorAll('[data-bs-toggle="popover"]');
         [...popovers].forEach(el => new bootstrap.Popover(el));
