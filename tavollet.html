@@ -2336,18 +2336,19 @@ function buildDecisionEmailHtml(dolgozoNeve, statusz, tipus, kezdoDatum, vegDatu
     document.getElementById('uiHoKeret').innerText = profile.ho_keret || 4;
 
     // Lekérdezés profile_id ALAPJÁN (fallback-ként meglévő user_email illesztéssel)
-    // Megjegyzés: a törölt munkatars_email szűrő kikerült a lekérdezésből!
     const [reqRes, otRes, decRes] = await Promise.all([
       supabaseClient.from('leave_requests').select('*').or(`profile_id.eq.${profile.id},user_email.ilike.${email}`),
       supabaseClient.from('work_logs').select('*').or(`profile_id.eq.${profile.id},user_email.ilike.${email}`),
       supabaseClient.from('overtime_decisions').select('*').or(`profile_id.eq.${profile.id},user_email.ilike.${email}`)
     ]);
 
+    // 🎯 FRISSÍTVE: Az 5. paraméter (nyitó egyenleg) bekötése
     const otStats = calculateUserOvertimeBalances(
       email,
       otRes.data || [],
       reqRes.data || [],
-      decRes.data || []
+      decRes.data || [],
+      profile.csusztathato_kezdo || 0 
     );
 
     const csusztathatoEl = document.getElementById('uiCsusztathato');
@@ -2377,7 +2378,6 @@ function buildDecisionEmailHtml(dolgozoNeve, statusz, tipus, kezdoDatum, vegDatu
     if (typeof hideSpinner === 'function') hideSpinner();
   }
 }
-
   function updateTabVisibility(profile) {
   if (!profile) return;
 
@@ -4575,7 +4575,15 @@ async function loadTeamBalances() {
       });
 
       const maradek = evesKeret - kivettIdei;
-      const otStats = calculateUserOvertimeBalances(emp.email, userOvertimes, userRequests, userDecisions);
+      
+      // 🎯 NYITÓ EGYENLEG (csusztathato_kezdo) ÁTADÁSA 5. PARAMÉTERKÉNT
+      const otStats = calculateUserOvertimeBalances(
+        emp.email, 
+        userOvertimes, 
+        userRequests, 
+        userDecisions, 
+        emp.csusztathato_kezdo || 0
+      );
 
       return {
         ...emp,
@@ -4589,7 +4597,8 @@ async function loadTeamBalances() {
         ejszakaiTulora: otStats.ejszakaiTulora,
         ejszakaiDetails: otStats.ejszakaiDetails || [],
         lejartTulora: otStats.lejartTulora,
-        lejartDetails: otStats.lejartDetails || []
+        lejartDetails: otStats.lejartDetails || [],
+        osszesCsusztathato: otStats.osszesCsusztathato
       };
     });
 
