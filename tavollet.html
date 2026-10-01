@@ -4114,11 +4114,11 @@ function filterTeamBalancesByGroup() {
 }
 
 function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, overtimeDecisions, initialHours = 0) {
-  const baseInitial = Number(initialHours) || 0;
+  let remainingInitial = Number(initialHours) || 0;
 
   if (!userEmail) {
     return { 
-      hetkoznapiTulora: 0, 
+      hetkoznapiTulora: parseFloat(remainingInitial.toFixed(2)), 
       hetkoznapiDetails: [],
       hetvegiTulora: 0, 
       hetvegiDetails: [],
@@ -4126,7 +4126,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
       ejszakaiDetails: [],
       lejartTulora: 0, 
       lejartDetails: [],
-      osszesCsusztathato: baseInitial 
+      osszesCsusztathato: parseFloat(remainingInitial.toFixed(2)) 
     };
   }
 
@@ -4182,8 +4182,6 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
   let lejartTulora = 0;
 
   const cleanHolidays = (typeof holidayDates !== 'undefined' && Array.isArray(holidayDates)) ? holidayDates : [];
-  
-  // 🎯 ÁTHELYEZETT MUNKANAPOK (SZOMBATOK)
   const cleanShiftedWorkdays = (typeof shiftedWorkdays !== 'undefined' && Array.isArray(shiftedWorkdays)) 
     ? shiftedWorkdays 
     : ['2026-08-08']; 
@@ -4211,7 +4209,6 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
 
     // 2. HÉTVÉGI / RENDEZVÉNY ÓRÁK
     let totalWeekendHrs = dayObj.weekendHours;
-
     if (totalWeekendHrs > 0) {
       if (isExpired) {
         lejartTulora += totalWeekendHrs;
@@ -4252,6 +4249,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
     return remaining;
   };
 
+  // 1. CSAK A 2026-10-01 UTÁNI KIVETT CSÚSZTATÁSOK LEVONÁSA (Először a nyitó egyenlegből)
   let totalUsedHours = 0;
   (leaveRequests || []).forEach(r => {
     const reqStart = r.kezdo_datum ? String(r.kezdo_datum).substring(0, 10) : '';
@@ -4289,11 +4287,19 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
 
   let uncoveredHours = totalUsedHours;
   if (uncoveredHours > 0) {
-    uncoveredHours = deductFrom(weekdayOvertimes, uncoveredHours);
+    // Elsőként a nyitó kezdő egyenlegből vonjuk le
+    if (remainingInitial > 0) {
+      const deductInit = Math.min(remainingInitial, uncoveredHours);
+      remainingInitial -= deductInit;
+      uncoveredHours -= deductInit;
+    }
+    // Majd a logolt túlórákból
+    if (uncoveredHours > 0) uncoveredHours = deductFrom(weekdayOvertimes, uncoveredHours);
     if (uncoveredHours > 0) uncoveredHours = deductFrom(weekendOvertimes, uncoveredHours);
     if (uncoveredHours > 0) uncoveredHours = deductFrom(nightOvertimes, uncoveredHours);
   }
 
+  // 2. CSAK A 2026-10-01 UTÁNI KIFIZETÉSEK LEVONÁSA
   (overtimeDecisions || []).forEach(d => {
     const decDate = d.datum ? String(d.datum).substring(0, 10) : (d.created_at ? String(d.created_at).substring(0, 10) : '');
     if (!decDate || decDate < CUTOFF_DATE) return;
@@ -4308,30 +4314,43 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
       const cat = normalizeStr(d.overtime_category || d.kategoria || '');
 
       let remainingPayout = payoutHours;
-      if (cat.includes('hetkoznap')) {
-        remainingPayout = deductFrom(weekdayOvertimes, remainingPayout);
-      } else if (cat.includes('hetveg')) {
+      if (cat.includes('hetveg')) {
         remainingPayout = deductFrom(weekendOvertimes, remainingPayout);
       } else if (cat.includes('ejszak')) {
         remainingPayout = deductFrom(nightOvertimes, remainingPayout);
       } else {
-        remainingPayout = deductFrom(weekdayOvertimes, remainingPayout);
+        // Hétköznapi vagy általános kifizetés: először a megmaradt nyitó egyenlegből vonjuk le
+        if (remainingInitial > 0) {
+          const deductInit = Math.min(remainingInitial, remainingPayout);
+          remainingInitial -= deductInit;
+          remainingPayout -= deductInit;
+        }
+        if (remainingPayout > 0) remainingPayout = deductFrom(weekdayOvertimes, remainingPayout);
         if (remainingPayout > 0) remainingPayout = deductFrom(weekendOvertimes, remainingPayout);
         if (remainingPayout > 0) remainingPayout = deductFrom(nightOvertimes, remainingPayout);
+      }
+
+      // Ha kategóriás kifizetésnél nem volt elég logolt óra a kategóriában, a maradékot a nyitó egyenlegből vonjuk le
+      if (remainingPayout > 0 && remainingInitial > 0) {
+        const deductInit = Math.min(remainingInitial, remainingPayout);
+        remainingInitial -= deductInit;
+        remainingPayout -= deductInit;
       }
     }
   });
 
-  let hetkoznapiTulora = weekdayOvertimes.reduce((acc, i) => acc + i.orak, 0);
+  let hetkoznapiLogolt = weekdayOvertimes.reduce((acc, i) => acc + i.orak, 0);
   let hetvegiTulora = weekendOvertimes.reduce((acc, i) => acc + i.orak, 0);
   let ejszakaiTulora = nightOvertimes.reduce((acc, i) => acc + i.orak, 0);
 
-  // 🎯 AZ ÖSSZES CSÚSZTATHATÓ ÓRA KISZÁMÍTÁSA A NYITÓ EGYENLEGGEL
-  let osszesCsusztathato = baseInitial + hetkoznapiTulora + hetvegiTulora + ejszakaiTulora - uncoveredHours;
+  // A hétköznapi túlóra keret automatikusan tartalmazza a megmaradt nyitó egyenleget is
+  let hetkoznapiTulora = remainingInitial + hetkoznapiLogolt;
 
   if (uncoveredHours > 0) {
     hetkoznapiTulora -= uncoveredHours;
   }
+
+  let osszesCsusztathato = hetkoznapiTulora + hetvegiTulora + ejszakaiTulora;
 
   const formatDetails = (arr) => {
     return arr
