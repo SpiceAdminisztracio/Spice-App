@@ -2457,7 +2457,6 @@ async function getClientYearlyReportFromSupabase(clientName) {
     return s;
   };
 
-  // SEGÉDFÜGGVÉNY: WORK_LOGS-BÓL A TÁVOLLÉTEK KISZŰRÉSE A DUPLÁZÓDÁS ELKERÜLÉSÉRE
   const isAbsenceLog = (l) => {
     const txt = typeof normalizeStr === 'function'
       ? normalizeStr(`${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`)
@@ -2509,21 +2508,88 @@ async function getClientYearlyReportFromSupabase(clientName) {
     const { data: allProfilesRaw, error: profErr } = await supabaseClient.from('profiles').select('*');
     if (profErr) throw profErr;
 
-    const allProfiles = allProfilesRaw.filter(p => {
+    // 🎯 A SZÜLÉSI ÉS TARTÓS BETEGSZABADSÁGON LÉVŐKET IS BEENGEDJÜK A LEKÉRDEZÉSBE A KISZÜRKÍTÉSHEZ
+    const allProfiles = (allProfilesRaw || []).filter(p => {
       const st = String(p.statusz || 'aktív').toLowerCase().trim();
-      return st === 'aktív' || st === 'aktiv';
+      return st === 'aktív' || st === 'aktiv' || st.includes('szülé') || st.includes('szules') || st.includes('tartós') || st.includes('tartos');
     });
 
-    const role = (currentUserProfile.jogosultsag || currentUserProfile.role || 'user').toLowerCase().trim();
-    const myEmail = cleanEmail(currentUserProfile.email);
+    const prof = window.currentUserProfile || currentUserProfile || {};
+    const myEmail = cleanEmail(prof.email);
 
-    let profiles = (role === 'admin' || role === 'boss') ? allProfiles : allProfiles.filter(p => {
-      const pEmail = cleanEmail(p.email);
-      if (pEmail === myEmail) return true;
-      if (cleanEmail(p.manager_email).includes(myEmail) || cleanEmail(p.leader_email).includes(myEmail) || cleanEmail(p.csoportvezeto_email).includes(myEmail)) return true;
-      const pGroup = p.display_csoport || p.csoport || '';
-      return typeof isGroupAllowedForLeader === 'function' ? isGroupAllowedForLeader(pGroup) : true;
-    });
+    // 🎯 SZIGORÚ HIERARCHIKUS SZEREPKÖRÖK MEGHATÁROZÁSA
+    const rawRole = typeof normalizeStr === 'function' ? normalizeStr(prof.jogosultsag || prof.role || prof.pozicio || '') : String(prof.jogosultsag || prof.role || '').toLowerCase();
+    
+    const isAdmin = rawRole.includes('admin') || rawRole.includes('boss');
+    const isManager = (rawRole.includes('manag') || rawRole.includes('mgr')) && !isAdmin;
+    const isLeader = (rawRole.includes('lead') || rawRole.includes('head') || rawRole.includes('vezeto')) && !isManager && !isAdmin;
+    const isCsv = (rawRole.includes('csoportvez') || rawRole.includes('csv')) && !isLeader && !isManager && !isAdmin;
+
+    // Felügyelt operatív csoportok (kizárólag a saját profilból feltöltve)
+    const myOpGroups = new Set();
+    const cleanStr = (s) => (typeof normalizeStr === 'function' ? normalizeStr(s) : String(s).toLowerCase()).replace(/\bcsapat\b/g, '').replace(/[\s\-_]+/g, '').trim();
+    const META_GROUPS = ['vezetoseg', 'leader', 'vezeto', 'manager', 'boss', 'egyeb', 'admin', 'menedzsment'];
+
+    const addOpGroup = (rawGroup) => {
+      if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
+      String(rawGroup).split(',').forEach(g => {
+        const c = cleanStr(g);
+        if (c && !META_GROUPS.includes(c)) myOpGroups.add(c);
+      });
+    };
+
+    addOpGroup(prof.latott_csoportok);
+    addOpGroup(prof.csoport);
+
+    let profiles = [];
+    if (isAdmin) {
+      profiles = allProfiles;
+    } else {
+      profiles = allProfiles.filter(p => {
+        const pEmail = cleanEmail(p.email);
+        
+        // Saját magát mindig látja a táblázatban
+        if (pEmail === myEmail) return true;
+
+        const empRoleRaw = typeof normalizeStr === 'function' ? normalizeStr(p.jogosultsag || p.role || p.pozicio || '') : String(p.jogosultsag || p.role || '').toLowerCase();
+        const isEmpBoss = empRoleRaw.includes('boss') || empRoleRaw.includes('admin') || empRoleRaw.includes('igazgato');
+        const isEmpManager = empRoleRaw.includes('manag') || empRoleRaw.includes('mgr');
+        const isEmpLeader = empRoleRaw.includes('lead') || empRoleRaw.includes('head') || empRoleRaw.includes('vezeto');
+        const isEmpCsv = empRoleRaw.includes('csoportvez') || empRoleRaw.includes('csv');
+
+        // 🎯 1. RANGSOR ALAPÚ KIZÁRÁSOK
+        if (isCsv && (isEmpBoss || isEmpManager || isEmpLeader || isEmpCsv)) return false; // CSV csak USER-t láthat
+        if (isLeader && (isEmpBoss || isEmpManager || isEmpLeader)) return false; // LEAD csak USER-t és CSV-t láthat
+        if (isManager && (isEmpBoss || isEmpManager)) return false; // MGR csak LEAD, CSV, USER-t láthat (más MGR-t / Boss-t nem)
+
+        // 🎯 2. KÖZVETLEN FELETTESI LÁNC ELLENŐRZÉSE (PONTOS EGYEZÉS)
+        const empM = cleanEmail(p.manager_email);
+        const empL = cleanEmail(p.leader_email);
+        const empC = cleanEmail(p.csoportvezeto_email);
+
+        if (myEmail && (empM === myEmail || empL === myEmail || empC === myEmail)) {
+          return true;
+        }
+
+        // 🎯 3. OPERATÍV CSOPORT ÁTFEDÉS ELLENŐRZÉSE
+        const empOpGroups = new Set();
+        const addEmpOpGroup = (rawGroup) => {
+          if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
+          String(rawGroup).split(',').forEach(g => {
+            const c = cleanStr(g);
+            if (c && !META_GROUPS.includes(c)) empOpGroups.add(c);
+          });
+        };
+        addEmpOpGroup(p.latott_csoportok);
+        addEmpOpGroup(p.csoport);
+
+        for (const g of empOpGroups) {
+          if (myOpGroups.has(g)) return true;
+        }
+
+        return false;
+      });
+    }
 
     if (!profiles || profiles.length === 0) {
       if (list) list.innerHTML = '<div class="alert alert-info text-center py-2">Nincs a jogosultságodhoz tartozó megjeleníthető aktív dolgozó.</div>';
@@ -2537,10 +2603,9 @@ async function getClientYearlyReportFromSupabase(clientName) {
     const endDateStr = `${m}-${String(lastDay).padStart(2, '0')}`;
     const cleanHolidays = (typeof holidayDates !== 'undefined' ? holidayDates : []).map(h => toStandardYYYYMMDD(h));
     
-    // 🎯 ÁTHELYEZETT MUNKANAPOK (SZOMBATOK) BEÁLLÍTÁSA
     const cleanShiftedWorkdays = (typeof shiftedWorkdays !== 'undefined' && Array.isArray(shiftedWorkdays) ? shiftedWorkdays : ['2026-08-08']).map(s => toStandardYYYYMMDD(s));
 
-    // 1. WORK_LOGS LEKÉRDEZÉSE (DÁTUMSZŰRVE, PAGINÁLVA)
+    // WORK_LOGS ÉS LEAVE_REQUESTS LEKÉRDEZÉSE (TÖLTÉS PAGINÁLVA)
     let allLogs = [], logFrom = 0, step = 1000;
     while (true) {
       const { data: chunk, error } = await supabaseClient
@@ -2556,7 +2621,6 @@ async function getClientYearlyReportFromSupabase(clientName) {
       logFrom += step;
     }
 
-    // 2. LEAVE_REQUESTS DÁTUMSZŰRT LEKÉRDEZÉSE
     let allLeaves = [], leaveFrom = 0;
     while (true) {
       const { data: chunk, error } = await supabaseClient
@@ -2633,13 +2697,36 @@ async function getClientYearlyReportFromSupabase(clientName) {
       let totalHours = 0, overtimeTotal = 0, downtimeTotal = 0;
 
       const belepStr = toStandardYYYYMMDD(p.belepett), kilepStr = toStandardYYYYMMDD(p.kilepett);
+      const statuszKezdet = toStandardYYYYMMDD(p.statusz_kezdet);
+      const statuszVeg = toStandardYYYYMMDD(p.statusz_veg);
+      const rawStatus = (p.statusz || '').toLowerCase();
+      const isPassiveRole = rawStatus.includes('szülé') || rawStatus.includes('szules') || rawStatus.includes('tartós') || rawStatus.includes('tartos');
+
       const days = [];
 
       for (let d = 1; d <= lastDay; d++) {
         const targetDateStr = `${m}-${String(d).padStart(2, '0')}`;
         
+        // Ki- és belépési dátum ellenőrzése
         if ((belepStr && targetDateStr < belepStr) || (kilepStr && targetDateStr > kilepStr)) {
           days.push({ t: 0, d: 0, overtime: 0, disabled: true });
+          continue;
+        }
+
+        // 🎯 TARTÓS TÁVOLLÉT (SZÜLÉSI / TARTÓS BETEGSZABADSÁG) KISZÜRKÍTÉSE
+        let isPassiveDay = false;
+        if (isPassiveRole) {
+          if (statuszKezdet && targetDateStr < statuszKezdet) {
+            isPassiveDay = false;
+          } else if (statuszVeg && targetDateStr > statuszVeg) {
+            isPassiveDay = false;
+          } else {
+            isPassiveDay = true;
+          }
+        }
+
+        if (isPassiveDay) {
+          days.push({ t: 0, d: 0, overtime: 0, passive: true });
           continue;
         }
 
@@ -2658,7 +2745,6 @@ async function getClientYearlyReportFromSupabase(clientName) {
           dayTotal += getLeaveHours(dayLeave, dailyLimit);
         }
 
-        // 🎯 TÚLMUNKA SZÁMÍTÁSA PONTOSAN A KÉRT SZABÁLYOK SZERINT:
         const dt = new Date(yr, mo, d, 12, 0, 0);
         const dayOfWeek = dt.getDay();
         const isShiftedWorkday = cleanShiftedWorkdays.includes(targetDateStr);
@@ -2667,10 +2753,8 @@ async function getClientYearlyReportFromSupabase(clientName) {
 
         let dayOvertime = 0;
         if (isWeekendDay || isHoliday) {
-          // Hétvégén és ünnepnapon a teljes munkanaplózott óraszám túlóra
           dayOvertime = dayWorkTotal;
         } else {
-          // Hétköznap (és áthelyezett szombaton) a napi limit (8 óra) feletti rész számít túlórának
           if (dayTotal > dailyLimit) {
             dayOvertime = dayTotal - dailyLimit;
           }
@@ -2688,13 +2772,19 @@ async function getClientYearlyReportFromSupabase(clientName) {
       if ((!displayGroup || cleanG === 'vezetőség' || cleanG === 'vezetoseg') && p.latott_csoportok) {
         displayGroup = p.latott_csoportok.split(',')[0].trim() || 'Egyéb';
       }
-      return { name: p.nev || email, group: displayGroup || 'Egyéb', role: (p.jogosultsag || 'user').toLowerCase(), dailyLimit, totalHours, overtime: overtimeTotal, downtimeTotal, days };
+      return { 
+        name: p.nev || email, 
+        group: displayGroup || 'Egyéb', 
+        role: (p.jogosultsag || 'user').toLowerCase(), 
+        statusz: p.statusz,
+        dailyLimit, totalHours, overtime: overtimeTotal, downtimeTotal, days 
+      };
     });
 
     res.sort((a, b) => {
       if (a.group !== b.group) return a.group.localeCompare(b.group, 'hu');
-      const isLeader = r => ['admin', 'manager', 'leader', 'csoportvezeto', 'csoportvezető'].includes(r);
-      if (isLeader(a.role) !== isLeader(b.role)) return isLeader(a.role) ? -1 : 1;
+      const isLeaderCheck = r => ['admin', 'manager', 'leader', 'csoportvezeto', 'csoportvezető'].includes(r);
+      if (isLeaderCheck(a.role) !== isLeaderCheck(b.role)) return isLeaderCheck(a.role) ? -1 : 1;
       return a.name.localeCompare(b.name, 'hu');
     });
 
@@ -2718,11 +2808,22 @@ async function getClientYearlyReportFromSupabase(clientName) {
         curGroup = w.group; 
         html += `<tr class="table-secondary"><td colspan="${lastDay + 4}" class="py-1 px-3"><strong><i class="bi bi-people me-1"></i>${escapeHtml(curGroup)}</strong></td></tr>`; 
       }
-      const isLeader = ['admin', 'manager', 'leader', 'csoportvezeto', 'csoportvezető'].includes(w.role);
-      const rowClass = isLeader ? 'table-info' : '';
       
+      const stNorm = (w.statusz || '').toLowerCase();
+      const isPassiveUser = stNorm.includes('szülé') || stNorm.includes('szules') || stNorm.includes('tartós') || stNorm.includes('tartos');
+      const isLeaderRow = ['admin', 'manager', 'leader', 'csoportvezeto', 'csoportvezető'].includes(w.role);
+      
+      // Passzív felhasználó sora átlátszóbb/kiszürkített stílust kap
+      const rowClass = isPassiveUser ? 'table-light opacity-75 text-muted' : (isLeaderRow ? 'table-info' : '');
+      const badgeIcon = isPassiveUser ? '<span class="badge bg-secondary ms-1" style="font-size:0.6rem;">INAKTÍV</span>' : '';
+
       html += `<tr class="${rowClass}">
-        <td class="sticky-col ${rowClass}"><div class="d-flex align-items-center"><i class="bi ${isLeader ? 'bi-shield-check text-primary' : 'bi-person text-secondary'} me-2"></i><span class="${isLeader ? 'fw-bold' : ''}">${escapeHtml(w.name)}</span></div></td>
+        <td class="sticky-col ${rowClass}">
+          <div class="d-flex align-items-center">
+            <i class="bi ${isPassiveUser ? 'bi-person-slash text-muted' : (isLeaderRow ? 'bi-shield-check text-primary' : 'bi-person text-secondary')} me-2"></i>
+            <span class="${isLeaderRow ? 'fw-bold' : ''}">${escapeHtml(w.name)}</span>${badgeIcon}
+          </div>
+        </td>
         <td class="text-center text-warning fw-bold" style="background-color: #fffdf5;">${(w.downtimeTotal || 0).toFixed(1)}</td>
         <td class="text-center text-primary fw-bold">${w.totalHours.toFixed(1)}</td>
         <td class="text-center ${w.overtime > 0 ? 'overtime-cell fw-bold text-danger' : ''}">${w.overtime.toFixed(1)}</td>`;
@@ -2732,7 +2833,11 @@ async function getClientYearlyReportFromSupabase(clientName) {
         let cellClass = dayMeta[i + 1];
         let cellContent = "";
         
-        if (day.disabled) {
+        if (day.passive) {
+          // Passzív szülési / tartós betegszabadság cella kiszürkítése
+          cellClass = "bg-secondary-subtle text-muted";
+          cellContent = `<span style="font-size: 0.6rem;" class="fw-bold text-secondary">SZÜL/TB</span>`;
+        } else if (day.disabled) {
           cellContent = `<span class="text-muted" style="font-size: 0.65rem;">-</span>`;
         } else if (day.t > 0) {
           cellContent = `<div style="font-size: 0.75rem; font-weight: bold;">${day.t.toFixed(1)}</div>`;
@@ -2764,7 +2869,6 @@ async function checkMissingRecords(evt) {
     if (hideBtn) hideBtn.style.display = 'inline-block'; 
     area.innerHTML = `<div class="p-2 text-center text-danger"><div class="spinner-border spinner-border-sm me-2"></div>Hiányzók keresése (${monthVal})...</div>`;
 
-    // DÁTUM NORMATIZÁLÓ SEGÉDFÜGGVÉNY (YYYY-MM-DD)
     const toStandardDate = (dStr) => {
       if (!dStr) return '';
       let s = String(dStr).split('T')[0].trim().replace(/\./g, '-').replace(/\s+/g, '');
@@ -2796,16 +2900,89 @@ async function checkMissingRecords(evt) {
          throw new Error("A választott hónap jövőbeli, még nincsenek rögzítendő napok.");
       }
 
-      let query = supabaseClient.from('profiles').select('*');
-      const userProf = currentUserProfile || {};
-      const rawRole = (userProf.jogosultsag || userProf.role || '').toLowerCase();
-      
-      if (rawRole.includes('csoportvez')) {
-        query = query.eq('csoport', userProf.csoport);
-      }
-      
-      const { data: profiles, error: profErr } = await query;
+      const { data: allProfilesRaw, error: profErr } = await supabaseClient.from('profiles').select('*');
       if (profErr) throw profErr;
+
+      const allProfiles = (allProfilesRaw || []).filter(p => {
+        const st = String(p.statusz || 'aktív').toLowerCase().trim();
+        return st === 'aktív' || st === 'aktiv';
+      });
+
+      const prof = window.currentUserProfile || currentUserProfile || {};
+      const myEmail = cleanEmail(prof.email);
+
+      const rawRole = typeof normalizeStr === 'function' ? normalizeStr(prof.jogosultsag || prof.role || prof.pozicio || '') : String(prof.jogosultsag || prof.role || '').toLowerCase();
+      
+      const isAdmin = rawRole.includes('admin') || rawRole.includes('boss');
+      const isManager = (rawRole.includes('manag') || rawRole.includes('mgr')) && !isAdmin;
+      const isLeader = (rawRole.includes('lead') || rawRole.includes('head') || rawRole.includes('vezeto')) && !isManager && !isAdmin;
+      const isCsv = (rawRole.includes('csoportvez') || rawRole.includes('csv')) && !isLeader && !isManager && !isAdmin;
+
+      // Felügyelt operatív csoportok (kizárólag a saját profilból feltöltve)
+      const myOpGroups = new Set();
+      const cleanStr = (s) => (typeof normalizeStr === 'function' ? normalizeStr(s) : String(s).toLowerCase()).replace(/\bcsapat\b/g, '').replace(/[\s\-_]+/g, '').trim();
+      const META_GROUPS = ['vezetoseg', 'leader', 'vezeto', 'manager', 'boss', 'egyeb', 'admin', 'menedzsment'];
+
+      const addOpGroup = (rawGroup) => {
+        if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
+        String(rawGroup).split(',').forEach(g => {
+          const c = cleanStr(g);
+          if (c && !META_GROUPS.includes(c)) myOpGroups.add(c);
+        });
+      };
+
+      addOpGroup(prof.latott_csoportok);
+      addOpGroup(prof.csoport);
+
+      let profiles = [];
+      if (isAdmin) {
+        profiles = allProfiles;
+      } else {
+        profiles = allProfiles.filter(p => {
+          const pEmail = cleanEmail(p.email);
+          
+          // Hiányzó-ellenőrzésnél saját magát kiszűri
+          if (pEmail === myEmail) return false;
+
+          const empRoleRaw = typeof normalizeStr === 'function' ? normalizeStr(p.jogosultsag || p.role || p.pozicio || '') : String(p.jogosultsag || p.role || '').toLowerCase();
+          const isEmpBoss = empRoleRaw.includes('boss') || empRoleRaw.includes('admin') || empRoleRaw.includes('igazgato');
+          const isEmpManager = empRoleRaw.includes('manag') || empRoleRaw.includes('mgr');
+          const isEmpLeader = empRoleRaw.includes('lead') || empRoleRaw.includes('head') || empRoleRaw.includes('vezeto');
+          const isEmpCsv = empRoleRaw.includes('csoportvez') || empRoleRaw.includes('csv');
+
+          // 🎯 1. RANGSOR ALAPÚ KIZÁRÁSOK
+          if (isCsv && (isEmpBoss || isEmpManager || isEmpLeader || isEmpCsv)) return false; 
+          if (isLeader && (isEmpBoss || isEmpManager || isEmpLeader)) return false; 
+          if (isManager && (isEmpBoss || isEmpManager)) return false; 
+
+          // 🎯 2. KÖZVETLEN FELETTESI LÁNC ELLENŐRZÉSE (PONTOS EGYEZÉS)
+          const empM = cleanEmail(p.manager_email);
+          const empL = cleanEmail(p.leader_email);
+          const empC = cleanEmail(p.csoportvezeto_email);
+
+          if (myEmail && (empM === myEmail || empL === myEmail || empC === myEmail)) {
+            return true;
+          }
+
+          // 🎯 3. OPERATÍV CSOPORT ÁTFEDÉS ELLENŐRZÉSE
+          const empOpGroups = new Set();
+          const addEmpOpGroup = (rawGroup) => {
+            if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
+            String(rawGroup).split(',').forEach(g => {
+              const c = cleanStr(g);
+              if (c && !META_GROUPS.includes(c)) empOpGroups.add(c);
+            });
+          };
+          addEmpOpGroup(p.latott_csoportok);
+          addEmpOpGroup(p.csoport);
+
+          for (const g of empOpGroups) {
+            if (myOpGroups.has(g)) return true;
+          }
+
+          return false;
+        });
+      }
 
       const endY = lastDayToCheck.getFullYear();
       const endM = String(lastDayToCheck.getMonth() + 1).padStart(2, '0');
@@ -2814,7 +2991,6 @@ async function checkMissingRecords(evt) {
       const startDateStr = `${monthVal}-01`;
       const endDateStr = `${endY}-${endM}-${endD}`;
       
-      // 1. WORK_LOGS LEKÉRÉSE PAGINÁLVA
       let allLogs = [], logFrom = 0, step = 1000;
       while (true) {
         const { data: chunk, error: logErr } = await supabaseClient
@@ -2830,7 +3006,6 @@ async function checkMissingRecords(evt) {
         logFrom += step;
       }
 
-      // 2. LEAVE_REQUESTS LEKÉRÉSE PAGINÁLVA
       let allLeaves = [], leaveFrom = 0;
       while (true) {
         const { data: chunk, error: leaveErr } = await supabaseClient
@@ -2852,7 +3027,6 @@ async function checkMissingRecords(evt) {
         return isApproved && !isHO;
       });
 
-      // 3. DUPLA PÁROSÍTÁSI TÉRKÉP FELÉPÍTÉSE (E-MAIL ÉS NÉV ALAPJÁN IS)
       const profileLookup = {};
       const logsByEmailMap = {};
       const leavesByEmailMap = {};
@@ -2879,7 +3053,7 @@ async function checkMissingRecords(evt) {
       };
 
       allLogs.forEach(l => {
-        if (isAbsenceLog(l)) return; // Távollétek kiszűrése a work_logs-ból
+        if (isAbsenceLog(l)) return;
 
         const lEmail = cleanEmail(l.user_email);
         const lName = typeof normalizeStr === 'function' ? normalizeStr(l.nev) : String(l.nev || '').toLowerCase().trim();
@@ -2910,9 +3084,6 @@ async function checkMissingRecords(evt) {
       const cleanHolidays = (typeof holidayDates !== 'undefined' ? holidayDates : []).map(h => toStandardDate(h));
       
       (profiles || []).forEach(p => {
-        const statuszRaw = p.statusz ? String(p.statusz).toLowerCase().trim() : 'aktív';
-        if (statuszRaw !== 'aktív' && statuszRaw !== 'aktiv') return;
-
         const email = cleanEmail(p.email);
         if (!email) return;
 
