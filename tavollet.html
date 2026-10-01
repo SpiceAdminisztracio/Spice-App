@@ -4113,7 +4113,9 @@ function filterTeamBalancesByGroup() {
   }
 }
 
-function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, overtimeDecisions) {
+function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, overtimeDecisions, initialHours = 0) {
+  const baseInitial = Number(initialHours) || 0;
+
   if (!userEmail) {
     return { 
       hetkoznapiTulora: 0, 
@@ -4124,12 +4126,12 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
       ejszakaiDetails: [],
       lejartTulora: 0, 
       lejartDetails: [],
-      osszesCsusztathato: 0 
+      osszesCsusztathato: baseInitial 
     };
   }
 
   // 🎯 RENDSZERSZINTŰ LEZÁRÁSI DÁTUM (CUTOFF DATE)
-  const CUTOFF_DATE = '2026-07-31';
+  const CUTOFF_DATE = '2026-10-01';
 
   const targetEmail = normalizeStr(userEmail);
   const today = new Date();
@@ -4140,7 +4142,8 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
   (overtimeLogs || []).forEach(o => {
     const rawDate = o.datum ? String(o.datum).substring(0, 10) : '';
     
-    if (!rawDate || rawDate <= CUTOFF_DATE) return; 
+    // 2026-10-01 előtti tételek figyelmen kívül hagyása
+    if (!rawDate || rawDate < CUTOFF_DATE) return; 
 
     const emailMatch = normalizeStr(o.user_email) === targetEmail;
     const rawStatus = normalizeStr(o.status);
@@ -4180,7 +4183,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
 
   const cleanHolidays = (typeof holidayDates !== 'undefined' && Array.isArray(holidayDates)) ? holidayDates : [];
   
-  // 🎯 ÁTHELYEZETT MUNKANAPOK (SZOMBATOK): Pl. 2026-08-08
+  // 🎯 ÁTHELYEZETT MUNKANAPOK (SZOMBATOK)
   const cleanShiftedWorkdays = (typeof shiftedWorkdays !== 'undefined' && Array.isArray(shiftedWorkdays)) 
     ? shiftedWorkdays 
     : ['2026-08-08']; 
@@ -4189,7 +4192,6 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
     const entryDate = new Date(dayObj.datum + 'T12:00:00');
     const dayOfWeek = entryDate.getDay();
     
-    // 🎯 Ellenőrizzük, hogy áthelyezett szombati munkanap-e
     const isShiftedWorkday = cleanShiftedWorkdays.includes(dayObj.datum);
     const isWeekendDay = (dayOfWeek === 0 || dayOfWeek === 6) && !isShiftedWorkday;
     const isHoliday = cleanHolidays.includes(dayObj.datum);
@@ -4207,7 +4209,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
       }
     }
 
-    // 2. HÉTVÉGI / RENDEZVÉNY ÓRÁK (Kizárólag ha külön így rögzítették)
+    // 2. HÉTVÉGI / RENDEZVÉNY ÓRÁK
     let totalWeekendHrs = dayObj.weekendHours;
 
     if (totalWeekendHrs > 0) {
@@ -4220,7 +4222,6 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
     }
 
     // 3. HÉTKOZNAPI TÚLMUNKA ÓRÁK
-    // Ha áthelyezett munkanap (2026-08-08), a limit 8 óra! Ha sima hétvége/ünnepnap, akkor 0 óra.
     const dailyLimit = (isWeekendDay || isHoliday) ? 0 : 8;
     const weekdayOvertimeHrs = Math.max(0, dayObj.daytimeHours - dailyLimit);
 
@@ -4254,7 +4255,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
   let totalUsedHours = 0;
   (leaveRequests || []).forEach(r => {
     const reqStart = r.kezdo_datum ? String(r.kezdo_datum).substring(0, 10) : '';
-    if (reqStart && reqStart <= CUTOFF_DATE) return; 
+    if (!reqStart || reqStart < CUTOFF_DATE) return; 
 
     const reqEmail = normalizeStr(r.user_email);
     const rawStatus = normalizeStr(r.status || r.statusz || r.allapot);
@@ -4295,7 +4296,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
 
   (overtimeDecisions || []).forEach(d => {
     const decDate = d.datum ? String(d.datum).substring(0, 10) : (d.created_at ? String(d.created_at).substring(0, 10) : '');
-    if (decDate && decDate <= CUTOFF_DATE) return;
+    if (!decDate || decDate < CUTOFF_DATE) return;
 
     const emailMatch = normalizeStr(d.user_email || d.munkatars_email) === targetEmail;
     const rawStatus = normalizeStr(d.status);
@@ -4325,7 +4326,8 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
   let hetvegiTulora = weekendOvertimes.reduce((acc, i) => acc + i.orak, 0);
   let ejszakaiTulora = nightOvertimes.reduce((acc, i) => acc + i.orak, 0);
 
-  let osszesCsusztathato = hetkoznapiTulora + hetvegiTulora + ejszakaiTulora - uncoveredHours;
+  // 🎯 AZ ÖSSZES CSÚSZTATHATÓ ÓRA KISZÁMÍTÁSA A NYITÓ EGYENLEGGEL
+  let osszesCsusztathato = baseInitial + hetkoznapiTulora + hetvegiTulora + ejszakaiTulora - uncoveredHours;
 
   if (uncoveredHours > 0) {
     hetkoznapiTulora -= uncoveredHours;
