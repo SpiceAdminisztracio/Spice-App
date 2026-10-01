@@ -3978,6 +3978,8 @@ function canSubmitPayoutFor(submitter, target) {
   if (!submitter || !target) return false;
 
   const safeNorm = (s) => String(s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const cleanStr = (s) => safeNorm(s).replace(/\bcsapat\b/g, '').replace(/[\s\-_]+/g, '').trim();
+
   const sEmail = typeof cleanEmail === 'function' ? cleanEmail(submitter.email) : String(submitter.email || '').toLowerCase().trim();
   const tEmail = typeof cleanEmail === 'function' ? cleanEmail(target.email) : String(target.email || '').toLowerCase().trim();
 
@@ -4017,45 +4019,42 @@ function canSubmitPayoutFor(submitter, target) {
     return false;
   }
 
-  // 3. CSOPORTVEZETŐNEK ÉS LEADERNEK a MANAGER küldhet be (csak a saját alcsoportjainak)
+  // 3. CSOPORTVEZETŐNEK ÉS LEADERNEK a MANAGER küldhet be
   if (tRole === 'csoportvezeto' || tRole === 'leader') {
     if (sRole === 'boss') return true;
     if (sRole === 'manager') {
       if (isDirectManager) return true;
-      const tGroup = safeNorm(target.csoport || '');
+      const tGroup = cleanStr(target.csoport || '');
       const sLatott = String(submitter.latott_csoportok || submitter.csoport || '').toLowerCase();
-      if (tGroup && sLatott.includes(tGroup)) return true;
+      if (tGroup && cleanStr(sLatott).includes(tGroup)) return true;
     }
     return false;
   }
 
-  // 4. USER-nek: Csoportvezető küldi be. Ha nincs Csoportvezető, akkor a Leader küldi be.
+  // 4. USER-nek (sima dolgozó):
   if (tRole === 'user') {
-    let hasCsv = false;
-    if (tC && tC.length > 3) {
-      hasCsv = true;
-    } else {
-      const profilesList = window.teamBalancesCache || [];
-      const tGroup = safeNorm(target.csoport || '');
-      hasCsv = profilesList.some(p => {
-        const pRole = getCleanRole(p);
-        const pGroup = safeNorm(p.csoport || '');
-        return pRole === 'csoportvezeto' && pGroup === tGroup;
-      });
-    }
+    const tGroup = cleanStr(target.csoport || '');
 
-    if (hasCsv) {
-      if (sRole === 'csoportvezeto' && (isDirectCsv || safeNorm(submitter.csoport) === safeNorm(target.csoport))) return true;
-      if (sRole === 'manager' && isDirectManager) return true;
-      if (sRole === 'boss') return true;
-      return false;
-    } else {
-      if (sRole === 'leader' && (isDirectLeader || safeNorm(submitter.csoport) === safeNorm(target.csoport))) return true;
-      if (sRole === 'csoportvezeto' && (isDirectCsv || safeNorm(submitter.csoport) === safeNorm(target.csoport))) return true;
-      if (sRole === 'manager' && isDirectManager) return true;
-      if (sRole === 'boss') return true;
-      return false;
-    }
+    // Ellenőrizzük, hogy van-e Csoportvezető vagy Leader a célpont csoportjában
+    const profilesList = window.teamBalancesCache || [];
+    const hasSubLeaderInGroup = (tC.length > 3 || tL.length > 3) || profilesList.some(p => {
+      const pRole = getCleanRole(p);
+      const pGroup = cleanStr(p.csoport || '');
+      return (pRole === 'csoportvezeto' || pRole === 'leader') && pGroup === tGroup;
+    });
+
+    const sLatott = String(submitter.latott_csoportok || submitter.csoport || '').toLowerCase();
+    const isGroupMatch = tGroup && cleanStr(sLatott).includes(tGroup);
+
+    // Csoportvezető és Leader indíthat kifizetést a beosztottnak
+    if (sRole === 'csoportvezeto' && (isDirectCsv || isGroupMatch)) return true;
+    if (sRole === 'leader' && (isDirectLeader || isGroupMatch)) return true;
+
+    // A Manager KIZÁRÓLAG akkor indíthat kifizetést a sima dolgozónak, ha NINCS középvezető (Lead/CSV) a csoportban!
+    if (sRole === 'manager' && (isDirectManager || isGroupMatch) && !hasSubLeaderInGroup) return true;
+
+    if (sRole === 'boss') return true;
+    return false;
   }
 
   return false;
@@ -4422,10 +4421,21 @@ async function loadTeamBalances() {
         if (isEmpBoss || isEmpManager || isEmpLeader) return false;
       }
 
-      // 3. MANAGER SZABÁLY: Csak LEAD-eket és CSV-ket láthat!
+      // 3. MANAGER SZABÁLY: Ha van a csoportban Lead/CSV, csak őket látja. Ha nincs, látja a dolgozókat is!
       if (isMyRoleManager) {
         if (isEmpBoss || isEmpManager) return false;
-        if (!isEmpLeader && !isEmpCsv) return false;
+
+        const empGroupClean = cleanStr(emp.csoport || '');
+        const hasSubLeaderInGroup = (profiles || []).some(p => {
+          const pGroupClean = cleanStr(p.csoport || '');
+          if (pGroupClean !== empGroupClean) return false;
+
+          const r = safeNorm(p.jogosultsag || p.role || p.pozicio || '');
+          return r.includes('lead') || r.includes('head') || r.includes('csoportvez') || r.includes('csv');
+        });
+
+        // Ha van középvezető a csoportban, a sima dolgozókat elrejtjük a Manager elől:
+        if (hasSubLeaderInGroup && !isEmpLeader && !isEmpCsv) return false;
       }
 
       // 4. KÖZVETLEN FELETTESI LÁNC ELLENŐRZÉSE (PONTOS EGYEZÉS)
@@ -6365,8 +6375,21 @@ async function renderTeamLeaveMatrix() {
       const isEmpLeaderOrCsv = pRole.includes('lead') || pRole.includes('head') || 
                                pRole.includes('vezeto') || pRole.includes('csoportvez') || 
                                pRole.includes('csv');
-      if (isMyRoleManager && !isEmpLeaderOrCsv) {
-        return false;
+
+      // 🎯 DINAMIKUS MANAGER SZŰRŐ: Ha van a csoportban Lead/CSV, csak őket látja a Manager. Ha nincs, látja a dolgozókat is!
+      if (isMyRoleManager) {
+        const empGroupClean = cleanStr(p.csoport || '');
+        const hasSubLeaderInGroup = (profiles || []).some(sub => {
+          const subGroupClean = cleanStr(sub.csoport || '');
+          if (subGroupClean !== empGroupClean) return false;
+          const subRole = safeNormalizeStr(sub.jogosultsag || sub.pozicio || '');
+          return subRole.includes('lead') || subRole.includes('head') || subRole.includes('csoportvez') || subRole.includes('csv');
+        });
+
+        // Ha van középvezető (Lead/CSV) a csoportban, a sima dolgozókat elrejtjük a Manager elől:
+        if (hasSubLeaderInGroup && !isEmpLeaderOrCsv) {
+          return false;
+        }
       }
 
       // 🎯 PONTOS EGYEZÉS A FELETTESI LÁNCBAN
