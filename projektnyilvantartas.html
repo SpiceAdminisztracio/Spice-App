@@ -2236,6 +2236,16 @@ async function getClientYearlyReportFromSupabase(clientName) {
     if (!area) return;
     area.style.display = 'block';
 
+    const safeEscapeHtml = (str) => {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    };
+
     try {
       const emailClean = typeof cleanEmail === 'function' ? cleanEmail(currentUserProfile?.email) : currentUserProfile?.email;
 
@@ -2246,8 +2256,6 @@ async function getClientYearlyReportFromSupabase(clientName) {
         .order('sorrend', { ascending: true });
 
       const global = (globalData || []).map(g => ({ id: g.munkaszam, vevo: g.vevo || "Belső", munka: g.munka || "" }));
-
-      // Adminisztratív munkaszámok eltárolása a mentéskori érvényesítéshez
       window.globalAdminJobs = global;
 
       // 2. Saját kedvencek lekérése a user_favorites táblából
@@ -2295,7 +2303,6 @@ async function getClientYearlyReportFromSupabase(clientName) {
             <label class="form-label fw-bold small text-primary mb-0 me-1">
               <i class="bi bi-pin-angle me-1"></i> ADMIN MUNKASZÁMOK:
             </label>
-            <!-- INFÓ BUBORÉK (CLICK TRIGGER - TELJES LEÍRÁSOKKAL) -->
             <span tabindex="0"
                   role="button"
                   data-bs-toggle="popover" 
@@ -2383,13 +2390,15 @@ async function getClientYearlyReportFromSupabase(clientName) {
           </div>
           <select id="globalFavSelect" class="form-select form-select-sm border-primary" onchange="handleGlobalSelect(this)">
             <option value="">Válassz fix feladatot...</option>
-            ${global.map(g => `<option value="${g.id}" data-vevo="${escapeHtml(g.vevo)}" data-munka="${escapeHtml(g.munka)}">${g.id} -${escapeHtml(g.munka)}</option>`).join('')}
+            ${global.map(g => `<option value="${g.id}" data-vevo="${safeEscapeHtml(g.vevo)}" data-munka="${safeEscapeHtml(g.munka)}">${g.id} -${safeEscapeHtml(g.munka)}</option>`).join('')}
           </select>
         </div>
 
         <!-- SAJÁT KEDVENCEK -->
         <div id="userFavSection" class="mb-3" style="${userFavs.length > 0 ? '' : 'display:none;'}">
-          <label class="form-label fw-bold small text-warning-emphasis mb-2"><i class="bi bi-star-fill text-warning me-1"></i> SAJÁT KEDVENCEK:</label>
+          <label class="form-label fw-bold small text-warning-emphasis mb-2">
+            <i class="bi bi-star-fill text-warning me-1"></i> SAJÁT KEDVENCEK:
+          </label>
           <div id="userFavButtons" class="d-flex flex-column gap-1"></div>
         </div>
 
@@ -2405,13 +2414,46 @@ async function getClientYearlyReportFromSupabase(clientName) {
         [...popovers].forEach(el => new bootstrap.Popover(el));
       }
 
-      // Saját kedvencek gombjainak kirajzolása
+      // 🎯 SAJÁT KEDVENCEK KÁRTYÁINAK KIRAJZOLÁSA (Az Előzmények stílusával teljesen harmonizálva)
       if (userFavs.length > 0) {
         const uButtons = document.getElementById('userFavButtons');
+        uButtons.innerHTML = '';
+
         userFavs.forEach(j => {
-          if (typeof createJobBtn === 'function') {
-            uButtons.appendChild(createJobBtn(j));
-          }
+          const mNum = String(j.id).trim();
+          const vevoText = j.vevo ? safeEscapeHtml(j.vevo) : 'Belső';
+          const munkaText = j.munka ? safeEscapeHtml(j.munka) : '';
+
+          const favCard = document.createElement('div');
+          favCard.className = 'd-flex align-items-center justify-content-between p-2 px-3 rounded-3 bg-light border border-light-subtle shadow-2xs';
+          favCard.style.cssText = 'cursor: pointer; transition: all 0.15s ease-in-out;';
+
+          // Hover effektek a kártyához
+          favCard.onmouseover = () => { favCard.style.backgroundColor = '#f1f5f9'; };
+          favCard.onmouseout = () => { favCard.style.backgroundColor = '#f8fafc'; };
+          
+          // Kártyára kattintás -> Munkaszám kiválasztása
+          favCard.onclick = () => selectFavoriteJob(mNum);
+
+          favCard.innerHTML = `
+            <div class="d-flex flex-column text-truncate me-2">
+              <div class="fw-bold small text-truncate">
+                <span class="text-dark me-1">${safeEscapeHtml(mNum)}</span>
+                ${vevoText ? `<span class="text-muted font-normal">| ${vevoText}</span>` : ''}
+              </div>
+              ${munkaText ? `<div class="text-muted" style="font-size: 0.74rem; line-height: 1.2;">${munkaText}</div>` : ''}
+            </div>
+            
+            <!-- Keret nélküli, finom sárga csillag az azonnali törléshez -->
+            <button type="button" 
+                    class="btn btn-sm btn-link text-warning p-1 ms-2 border-0 flex-shrink-0" 
+                    title="Eltávolítás a kedvencek közül" 
+                    onclick="toggleFavorite('${mNum}', event)">
+              <i class="bi bi-star-fill" style="font-size: 1.1rem;"></i>
+            </button>
+          `;
+
+          uButtons.appendChild(favCard);
         });
       }
 
@@ -2426,7 +2468,7 @@ async function getClientYearlyReportFromSupabase(clientName) {
       }
 
     } catch (e) {
-      console.error("Hiba a gyorsválasztó betöltésekor:", e);
+      console.error("iba a gyorsválasztó betöltésekor:", e);
     }
 }
 
@@ -4502,12 +4544,15 @@ function safeSetGlobalLoading(isLoading, message) {
           sendAutomatedEmail(req.user_email, subject, bodyText, htmlBodyText);
 
         } else {
+          // 🎯 DUPLA ADMIN E-MAIL CÍM BEÁLLÍTÁSA
+          const adminEmails = 'admin.oranyilvantartas@spicecommunication.hu, sipos.gabor@spicecommunication.hu';
+
           const { error } = await supabaseClient
             .from('requests')
             .update({
               status: 'pending_admin',
               approver_comment: finalComment,
-              approver_email: 'admin.oranyilvantartas@spicecommunication.hu'
+              approver_email: adminEmails
             })
             .eq('id', requestId);
 
@@ -4532,7 +4577,9 @@ function safeSetGlobalLoading(isLoading, message) {
             <p style="font-size: 13px; color: #555555; margin-bottom: 20px;">Kérlek, kattints az alábbi gombra az adminisztrátori véglegesítéshez:</p>
             <a href="${directApprovalUrl}" target="_blank" style="background-color: #485fc7; color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block;">Megnyitás az Admin Felületen</a>
           </div>`;
-          sendAutomatedEmail('admin.oranyilvantartas@spicecommunication.hu', subject, bodyText, htmlBodyText);
+
+          // 🎯 ÉRTESÍTÉS KÜLDÉSE MINDKÉT E-MAIL CÍMRE
+          sendAutomatedEmail(adminEmails, subject, bodyText, htmlBodyText);
         }
       }
 
@@ -4541,7 +4588,7 @@ function safeSetGlobalLoading(isLoading, message) {
     } catch (err) {
       showModal("Hiba az elbírálás során: " + err.message, "Hiba");
     }
-  }
+}
 
   async function sendAutomatedEmail(toEmail, subject, bodyText, htmlBodyText) {
   const GAS_EMAIL_URL = "https://script.google.com/macros/s/AKfycbycePikT3E6hcNMp-hoA_fQI5UxRr5fdY2sizyGOZM5W44mkfWlnMLC8mHuHjF9YQ/exec";
