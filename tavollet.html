@@ -3865,27 +3865,21 @@ function renderGlobalTimeline(data) {
         const isPending = st.includes('pending') || st.includes('fugg');
         const pendingStyle = isPending ? 'border: 1.5px dashed #f59e0b; opacity: 0.85;' : '';
 
-        // 🎯 IDŐINTERVALLUM FORMÁZÁSA
-        let rawTimeStr = '';
+        // 🎯 IDŐINTERVALLUM FORMÁZÁSA (NÉV NÉLKÜL)
+        let timeStr = 'Egész napos';
         if (req.kezdo_ido && req.veg_ido) {
-          rawTimeStr = `${req.kezdo_ido} - ${req.veg_ido}`;
+          timeStr = `${req.kezdo_ido} - ${req.veg_ido}`;
         } else if (req.ido || req.ido_intervallum) {
-          rawTimeStr = `${req.ido || req.ido_intervallum}`;
+          timeStr = `${req.ido || req.ido_intervallum}`;
         }
 
-        // Asztali hover buborék (title)
-        const hoverTime = rawTimeStr ? ` (${rawTimeStr})` : '';
-        const tooltipText = `${req.tipus}${hoverTime} (${req.status})`;
-
-        // Mobilos rábökés / Kattintási információ (showModal)
-        const modalTime = rawTimeStr ? `<br><b>Idősáv:</b> ${rawTimeStr}` : '';
-        const modalText = `<b>Munkatárs:</b> ${escapeHtml(emp.nev || emp.email)}<br><b>Típus:</b> ${escapeHtml(req.tipus)}${modalTime}<br><b>Státusz:</b> ${escapeHtml(req.status)}`;
+        const displayInfo = `${req.tipus}: ${timeStr}`;
 
         cellContent = `
           <span class="gantt-badge" 
-                style="background-color: ${config.bg}; color: ${config.text}; ${pendingStyle}; cursor: pointer;" 
-                title="${escapeHtml(tooltipText)}"
-                onclick="if(typeof showModal === 'function') showModal('${modalText.replace(/'/g, "\\'")}', 'Jelenlét részletei');">
+                style="background-color: ${config.bg}; color: ${config.text}; ${pendingStyle}; cursor: pointer; display: inline-block; width: 100%; text-align: center;" 
+                title="${escapeHtml(displayInfo)}"
+                onclick="event.stopPropagation(); if(typeof showModal === 'function') showModal('${escapeHtml(displayInfo)}', 'Idősáv');">
             ${config.short}
           </span>`;
       }
