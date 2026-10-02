@@ -3865,10 +3865,27 @@ function renderGlobalTimeline(data) {
         const isPending = st.includes('pending') || st.includes('fugg');
         const pendingStyle = isPending ? 'border: 1.5px dashed #f59e0b; opacity: 0.85;' : '';
 
+        // 🎯 IDŐINTERVALLUM FORMÁZÁSA
+        let rawTimeStr = '';
+        if (req.kezdo_ido && req.veg_ido) {
+          rawTimeStr = `${req.kezdo_ido} - ${req.veg_ido}`;
+        } else if (req.ido || req.ido_intervallum) {
+          rawTimeStr = `${req.ido || req.ido_intervallum}`;
+        }
+
+        // Asztali hover buborék (title)
+        const hoverTime = rawTimeStr ? ` (${rawTimeStr})` : '';
+        const tooltipText = `${req.tipus}${hoverTime} (${req.status})`;
+
+        // Mobilos rábökés / Kattintási információ (showModal)
+        const modalTime = rawTimeStr ? `<br><b>Idősáv:</b> ${rawTimeStr}` : '';
+        const modalText = `<b>Munkatárs:</b> ${escapeHtml(emp.nev || emp.email)}<br><b>Típus:</b> ${escapeHtml(req.tipus)}${modalTime}<br><b>Státusz:</b> ${escapeHtml(req.status)}`;
+
         cellContent = `
           <span class="gantt-badge" 
-                style="background-color: ${config.bg}; color: ${config.text}; ${pendingStyle}" 
-                title="${escapeHtml(req.tipus)} (${req.status})">
+                style="background-color: ${config.bg}; color: ${config.text}; ${pendingStyle}; cursor: pointer;" 
+                title="${escapeHtml(tooltipText)}"
+                onclick="if(typeof showModal === 'function') showModal('${modalText.replace(/'/g, "\\'")}', 'Jelenlét részletei');">
             ${config.short}
           </span>`;
       }
