@@ -1082,18 +1082,36 @@
   };
 
   async function loadMasterProjects() {
-  const { data, error } = await supabaseClient
-    .from('projects')
-    .select('*')
-    .eq('lezarva', false)
-    .order('munkaszam', { ascending: true });
+  let allData = [];
+  let from = 0;
+  const step = 1000;
 
-  if (error) {
-    console.error("Hiba a projektek betöltésekor:", error);
-    return [];
+  try {
+    while (true) {
+      const { data, error } = await supabaseClient
+        .from('projects')
+        .select('*')
+        .eq('lezarva', false)
+        .order('munkaszam', { ascending: true })
+        .range(from, from + step - 1);
+
+      if (error) {
+        console.error("Hiba a projektek betöltésekor:", error);
+        break;
+      }
+
+      if (data && data.length > 0) {
+        allData.push(...data);
+      }
+
+      if (!data || data.length < step) break;
+      from += step;
+    }
+  } catch (e) {
+    console.error("Projektek lekérdezési hiba:", e);
   }
 
-  allMasterProjects = (data || []).map(p => ({
+  allMasterProjects = (allData || []).map(p => ({
     id: String(p.munkaszam || p.kod || '').trim(),
     pm: p.pm || "N/A",
     vevo: p.vevo || "N/A",
