@@ -3854,6 +3854,7 @@ function renderGlobalTimeline(data) {
 
       let cellContent = '';
       let cellClasses = [];
+      let tdAttributes = `style="text-align: center; vertical-align: middle; padding: 2px 1px;"`;
 
       if (isWeekend) cellClasses.push('weekend-cell');
       if (isToday) cellClasses.push('today-cell');
@@ -3874,17 +3875,21 @@ function renderGlobalTimeline(data) {
         }
 
         const displayInfo = `${req.tipus}: ${timeStr}`;
+        const safeDisplayInfo = displayInfo.replace(/'/g, "\\'"); // Biztonságos JS formátum mobilos kattintáshoz
+
+        // 🎯 KATTINTÁS ÉS HOVER ÁTHELYEZÉSE A CELLÁRA (TD) MOBILOS BIZTONSÁG MIATT
+        tdAttributes = `style="text-align: center; vertical-align: middle; padding: 2px 1px; cursor: pointer;" 
+                        title="${escapeHtml(displayInfo)}" 
+                        onclick="event.stopPropagation(); if(typeof showModal === 'function') showModal('${safeDisplayInfo}', 'Idősáv');"`;
 
         cellContent = `
           <span class="gantt-badge" 
-                style="background-color: ${config.bg}; color: ${config.text}; ${pendingStyle}; cursor: pointer; display: inline-block; width: 100%; text-align: center;" 
-                title="${escapeHtml(displayInfo)}"
-                onclick="event.stopPropagation(); if(typeof showModal === 'function') showModal('${escapeHtml(displayInfo)}', 'Idősáv');">
+                style="background-color: ${config.bg}; color: ${config.text}; ${pendingStyle}; display: inline-block; width: 100%; text-align: center; pointer-events: none;">
             ${config.short}
           </span>`;
       }
 
-      bodyHTML += `<td class="${cellClasses.join(' ')}" style="text-align: center; vertical-align: middle; padding: 2px 1px;">${cellContent}</td>`;
+      bodyHTML += `<td class="${cellClasses.join(' ')}" ${tdAttributes}>${cellContent}</td>`;
     }
     bodyHTML += `</tr>`;
   });
