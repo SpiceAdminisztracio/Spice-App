@@ -3875,21 +3875,20 @@ function renderGlobalTimeline(data) {
         }
 
         const displayInfo = `${req.tipus}: ${timeStr}`;
-        const safeDisplayInfo = displayInfo.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        // Biztonságos JS stringté alakítás, ami nem akasztja meg a böngészőt!
+        const safeJSInfo = escapeHtml(displayInfo).replace(/'/g, "\\'"); 
 
-        // 🎯 BIZTOS ÉRINTÉS / KATTINTÁS KEZELÉS MOBILRA ÉS ASZTALRA BROWSER-INDEPENDENT MÓDON
-        const clickAction = `event.stopPropagation(); if (event.type === 'touchstart') { event.preventDefault(); } if (typeof showModal === 'function') { showModal('${safeDisplayInfo}', 'Idősáv'); }`;
-
-        tdAttributes = `style="text-align: center; vertical-align: middle; padding: 2px 1px; cursor: pointer; position: relative; z-index: 5;" 
-                        title="${escapeHtml(displayInfo)}" 
-                        onclick="${clickAction}" 
-                        ontouchstart="${clickAction}"`;
-
+        // 🎯 VÉGSŐ MOBILOS BIZTONSÁG: Az onclick eseményt NEM a <td>-re tesszük, hanem közvetlenül a gombra, 
+        // egy "szélesített" érintési zónával.
         cellContent = `
-          <span class="gantt-badge" 
-                style="background-color: ${config.bg}; color: ${config.text}; ${pendingStyle}; display: inline-block; width: 100%; text-align: center; pointer-events: none;">
-            ${config.short}
-          </span>`;
+          <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; cursor: pointer;"
+               onclick="event.preventDefault(); event.stopPropagation(); setTimeout(() => { if(typeof showToast === 'function') { showToast('${safeJSInfo}', 'info'); } else if(typeof showModal === 'function') { showModal('${safeJSInfo}', 'Távollét Részletei'); } else { alert('${safeJSInfo}'); } }, 50);">
+            <span class="gantt-badge" 
+                  style="background-color: ${config.bg}; color: ${config.text}; ${pendingStyle}; display: inline-block; width: 100%; text-align: center;"
+                  title="${escapeHtml(displayInfo)}">
+              ${config.short}
+            </span>
+          </div>`;
       }
 
       bodyHTML += `<td class="${cellClasses.join(' ')}" ${tdAttributes}>${cellContent}</td>`;
