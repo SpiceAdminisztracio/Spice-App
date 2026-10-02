@@ -3875,12 +3875,15 @@ function renderGlobalTimeline(data) {
         }
 
         const displayInfo = `${req.tipus}: ${timeStr}`;
-        const safeDisplayInfo = displayInfo.replace(/'/g, "\\'"); // Biztonságos JS formátum mobilos kattintáshoz
+        const safeDisplayInfo = displayInfo.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
-        // 🎯 KATTINTÁS ÉS HOVER ÁTHELYEZÉSE A CELLÁRA (TD) MOBILOS BIZTONSÁG MIATT
-        tdAttributes = `style="text-align: center; vertical-align: middle; padding: 2px 1px; cursor: pointer;" 
+        // 🎯 BIZTOS ÉRINTÉS / KATTINTÁS KEZELÉS MOBILRA ÉS ASZTALRA BROWSER-INDEPENDENT MÓDON
+        const clickAction = `event.stopPropagation(); if (event.type === 'touchstart') { event.preventDefault(); } if (typeof showModal === 'function') { showModal('${safeDisplayInfo}', 'Idősáv'); }`;
+
+        tdAttributes = `style="text-align: center; vertical-align: middle; padding: 2px 1px; cursor: pointer; position: relative; z-index: 5;" 
                         title="${escapeHtml(displayInfo)}" 
-                        onclick="event.stopPropagation(); if(typeof showModal === 'function') showModal('${safeDisplayInfo}', 'Idősáv');"`;
+                        onclick="${clickAction}" 
+                        ontouchstart="${clickAction}"`;
 
         cellContent = `
           <span class="gantt-badge" 
