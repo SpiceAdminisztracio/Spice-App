@@ -877,7 +877,6 @@
               <option value="Tavalyi szabadság">Tavalyi szabadság</option>
               <option value="Kegyeleti szabadság">Kegyeleti szabadság</option>
               <option value="Tréning">Tréning</option>
-              <option value="Ügyfél">Ügyfél (Időponttal)</option>
               <option value="Csúsztatás">Csúsztatás (Óraalapon)</option>
               <option value="Fizetés nélküli szabadság">Fizetés nélküli szabadság</option>
             </select>
@@ -975,7 +974,6 @@
             <span class="badge badge-fn px-2 py-1">FN - Fizetés nélküli</span>
             <span class="badge badge-k px-2 py-1">K - Kegyeleti</span>
             <span class="badge badge-ho px-2 py-1">HO - Home office</span>
-            <span class="badge badge-u px-2 py-1">Ü - Ügyfél</span>
             <span class="badge badge-tr px-2 py-1">TR - Tréning</span>
             <span class="badge badge-cs px-2 py-1">CS - Csúsztatás</span>
           </div>
@@ -1941,7 +1939,7 @@
           <!-- Dinamikus indoklás helye -->
         </div>
         <div class="mb-2">
-          <label class="form-label small fw-bold" for="specialHoUserReason">Indoklás a HR Vezető számára <span class="text-danger">*</span></label>
+          <label class="form-label small fw-bold" for="specialHoUserReason">Indoklás a felettes számára <span class="text-danger">*</span></label>
           <textarea class="form-control form-control-sm" id="specialHoUserReason" rows="3" placeholder="Miért van szükséged erre a Home Office napra? (Kötelező)"></textarea>
         </div>
       </div>
@@ -2819,7 +2817,7 @@ async function handleFormSubmit(e) {
       return;
     }
 
-    // Különleges HR zászló leválasztása
+    // Különleges (kereten felüli) HO zászló leválasztása
     const isSpecialHR = Boolean(reqData.isSpecialHRRequest);
     delete reqData.isSpecialHRRequest;
 
@@ -2827,24 +2825,18 @@ async function handleFormSubmit(e) {
     reqData.profile_id = currentUserProfile.id;
     reqData.user_email = currentUserProfile.email; // Megtartva a visszamenőleges kompatibilitáshoz
 
-    // Automatikus jóváhagyás ellenőrzése
+    // Automatikus jóváhagyás ellenőrzése (a kereten felüli HO nem hagyódik jóvá automatikusan)
     const autoApproved = !isSpecialHR && ['Betegszabadság', 'Home office', 'Tréning', 'Ügyfél'].includes(reqData.tipus);
 
     let nextApprover = '';
     let initialStatus = '';
 
-    if (isSpecialHR) {
-      // 1. Különleges HO kérelem -> HR Vezetőhöz megy pending_hr státusszal
-      nextApprover = typeof getHRManagerEmail === 'function' 
-        ? await getHRManagerEmail() 
-        : 'admin.oranyilvantartas@spicecommunication.hu';
-      initialStatus = 'pending_hr';
-    } else if (autoApproved) {
-      // 2. Automatikusan elfogadott típusok
+    if (autoApproved) {
+      // 1. Automatikusan elfogadott típusok (Kereten belüli HO, Betegszabadság, stb.)
       nextApprover = 'admin.oranyilvantartas@spicecommunication.hu';
       initialStatus = 'approved';
     } else {
-      // 3. Rendes szabadságok felettesi bírálati lánca (DELEGÁLÁS: dinamikus átirányítás a helyetteshez)
+      // 2. Kereten felüli HO és Rendes szabadságok felettesi bírálati lánca (DELEGÁLÁS: dinamikus átirányítás a helyetteshez)
       const baseApprover = getNextApproverEmail(currentUserProfile);
       nextApprover = typeof getEffectiveApproverEmail === 'function' 
         ? await getEffectiveApproverEmail(baseApprover) 
@@ -2874,9 +2866,9 @@ async function handleFormSubmit(e) {
         throw error;
       }
 
-      // Toast értesítés a HR Vezető vagy a bíráló pontos e-mail címével
+      // Toast értesítés a felettes pontos e-mail címével
       if (isSpecialHR) {
-        showToast(`Különleges HO kérelem továbbítva a HR Vezetőnek (<strong>${nextApprover}</strong>) elbírálásra!`, "info");
+        showToast(`Kereten felüli HO kérelem elküldve a felettesnek (<strong>${nextApprover}</strong>) elbírálásra!`, "warning");
       } else if (autoApproved) {
         showToast("Távollét sikeresen rögzítve!", "success");
       } else {
@@ -2888,10 +2880,10 @@ async function handleFormSubmit(e) {
       
       if (typeof check15DayRule === "function") check15DayRule(); 
       
-      // E-mail értesítés kiküldése (a tényleges bírálónak / helyettesnek)
+      // E-mail értesítés kiküldése a bíráló felettesnek
       if (!autoApproved) {
         const subject = isSpecialHR 
-          ? `⚠️ Különleges HO kérelem (HR) - ${reqData.nev}` 
+          ? `⚠️ Kereten felüli HO kérelem - ${reqData.nev}` 
           : `Új szabadság kérelem - ${reqData.nev}`;
 
         const bodyText = `Szia!\n\n${reqData.nev} új távolléti kérelmet nyújtott be (${reqData.kezdo_datum} - ${reqData.veg_datum}).\nIndoklás / Megjegyzés:\n${reqData.rendkivuli || reqData.megjegyzes || '-'}`;
@@ -2922,7 +2914,6 @@ async function handleFormSubmit(e) {
       if (btn) btn.disabled = false;
     }
 }
-
 
   function check15DayRule() {
     const tipusEl = document.getElementById('tipus');
