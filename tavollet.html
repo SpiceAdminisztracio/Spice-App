@@ -2805,10 +2805,17 @@ async function handleFormSubmit(e) {
     pendingNegativeRequest = null;
   }
 
-  async function finalizeAndSaveRequest(reqData, btn) {
+  // Segédfüggvény a Kreatív csapatok azonosítására
+function isCreativeTeamUser(profile) {
+  if (!profile || !profile.csoport) return false;
+  const safeNorm = (s) => String(s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const cs = safeNorm(profile.csoport);
+  return cs.includes('kreativ') && (cs.includes('copy') || cs.includes('grafik') || cs.includes('grafikus'));
+}
+
+async function finalizeAndSaveRequest(reqData, btn) {
     if (btn) btn.disabled = true;
 
-    // Ellenőrizzük, hogy a profil be van-e töltve
     if (!currentUserProfile || !currentUserProfile.id) {
       if (typeof showToast === 'function') {
         showToast("Hiba: A felhasználói profil nem található. Kérlek frissítsd az oldalt!", "danger");
@@ -2817,44 +2824,51 @@ async function handleFormSubmit(e) {
       return;
     }
 
-    // Különleges (kereten felüli) HO zászló leválasztása
     const isSpecialHR = Boolean(reqData.isSpecialHRRequest);
     delete reqData.isSpecialHRRequest;
 
-    // Szigorú relációs azonosítók csatolása az új adatbázis-sémához
     reqData.profile_id = currentUserProfile.id;
-    reqData.user_email = currentUserProfile.email; // Megtartva a visszamenőleges kompatibilitáshoz
+    reqData.user_email = currentUserProfile.email;
 
-    // Automatikus jóváhagyás ellenőrzése (a kereten felüli HO nem hagyódik jóvá automatikusan)
     const autoApproved = !isSpecialHR && ['Betegszabadság', 'Home office', 'Tréning', 'Ügyfél'].includes(reqData.tipus);
+    const isCreativeUser = typeof isCreativeTeamUser === 'function' && isCreativeTeamUser(currentUserProfile);
 
     let nextApprover = '';
     let initialStatus = '';
 
+    const baseApprover = getNextApproverEmail(currentUserProfile);
+    const targetLeaderEmail = typeof getEffectiveApproverEmail === 'function' 
+      ? await getEffectiveApproverEmail(baseApprover) 
+      : baseApprover;
+
     if (autoApproved) {
-      // 1. Automatikusan elfogadott típusok (Kereten belüli HO, Betegszabadság, stb.)
       nextApprover = 'admin.oranyilvantartas@spicecommunication.hu';
       initialStatus = 'approved';
+    } else if (isCreativeUser) {
+      const adelEmail = 'onofri-varga.adel@spicecommunication.hu';
+      nextApprover = adelEmail;
+      initialStatus = 'pending_creative_review';
+      reqData.final_approver_email = targetLeaderEmail;
     } else {
-      // 2. Kereten felüli HO és Rendes szabadságok felettesi bírálati lánca (DELEGÁLÁS: dinamikus átirányítás a helyetteshez)
-      const baseApprover = getNextApproverEmail(currentUserProfile);
-      nextApprover = typeof getEffectiveApproverEmail === 'function' 
-        ? await getEffectiveApproverEmail(baseApprover) 
-        : baseApprover;
-
+      nextApprover = targetLeaderEmail;
       initialStatus = (nextApprover === 'admin.oranyilvantartas@spicecommunication.hu') ? 'pending_admin' : 'pending_level1';
     }
 
     reqData.approver_email = nextApprover;
     reqData.status = initialStatus;
 
-    // ADATBÁZIS TÍPUS-SZANÁLÁS (A 400 Bad Request / Postgres type mismatch kivédésére)
+    // 🎯 ADATBÁZIS TÍPUS-SZANÁLÁS (Tisztítás a 400 Bad Request elkerülésére)
     reqData.kezdo_ido = (reqData.kezdo_ido && String(reqData.kezdo_ido).trim() !== '') ? String(reqData.kezdo_ido).trim() : null;
     reqData.veg_ido = (reqData.veg_ido && String(reqData.veg_ido).trim() !== '') ? String(reqData.veg_ido).trim() : null;
     reqData.helyettes_email = (reqData.helyettes_email && String(reqData.helyettes_email).trim() !== '') ? String(reqData.helyettes_email).trim() : null;
     reqData.megjegyzes = (reqData.megjegyzes && String(reqData.megjegyzes).trim() !== '') ? String(reqData.megjegyzes).trim() : null;
     reqData.rendkivuli = (reqData.rendkivuli && String(reqData.rendkivuli).trim() !== '') ? String(reqData.rendkivuli).trim() : null;
     reqData.oraszam = (reqData.oraszam !== null && reqData.oraszam !== undefined && !isNaN(reqData.oraszam)) ? Number(reqData.oraszam) : null;
+
+    // Ha nincs final_approver_email, TÖRÖLJÜK a kulcsot a küldendő objektumból!
+    if (!reqData.final_approver_email) {
+      delete reqData.final_approver_email;
+    }
 
     try {
       const { error } = await supabaseClient
@@ -2866,8 +2880,9 @@ async function handleFormSubmit(e) {
         throw error;
       }
 
-      // Toast értesítés a felettes pontos e-mail címével
-      if (isSpecialHR) {
+      if (isCreativeUser && !autoApproved) {
+        showToast(`Kérelem elküldve Varga Adélnak véleményezésre!`, "info");
+      } else if (isSpecialHR) {
         showToast(`Kereten felüli HO kérelem elküldve a felettesnek (<strong>${nextApprover}</strong>) elbírálásra!`, "warning");
       } else if (autoApproved) {
         showToast("Távollét sikeresen rögzítve!", "success");
@@ -2880,11 +2895,10 @@ async function handleFormSubmit(e) {
       
       if (typeof check15DayRule === "function") check15DayRule(); 
       
-      // E-mail értesítés kiküldése a bíráló felettesnek
       if (!autoApproved) {
-        const subject = isSpecialHR 
-          ? `⚠️ Kereten felüli HO kérelem - ${reqData.nev}` 
-          : `Új szabadság kérelem - ${reqData.nev}`;
+        const subject = isCreativeUser 
+          ? `💬 Véleményezendő Kreatív kérelem - ${reqData.nev}` 
+          : (isSpecialHR ? `⚠️ Kereten felüli HO kérelem - ${reqData.nev}` : `Új szabadság kérelem - ${reqData.nev}`);
 
         const bodyText = `Szia!\n\n${reqData.nev} új távolléti kérelmet nyújtott be (${reqData.kezdo_datum} - ${reqData.veg_datum}).\nIndoklás / Megjegyzés:\n${reqData.rendkivuli || reqData.megjegyzes || '-'}`;
         
@@ -2904,15 +2918,85 @@ async function handleFormSubmit(e) {
       if (typeof loadMyRequests === 'function') await loadMyRequests();
 
     } catch (err) {
-      // 🎯 ÁTFEDÉS-VÉDELEM ÉS SPECIFIKUS HIBÁK CÉLZOTT KISZŰRÉSE
       if (err.code === '23P01' || (err.message && err.message.includes('no_overlapping_leave_requests'))) {
-        showToast("⚠️ Erre az időszakra (vagy annak egy részére) már van benyújtott vagy elfogadott kérelmed!", "warning");
+        showToast("⚠️ Erre az időszakra már van olyan rögzített távolléted, amivel ez a típus nem vonható össze!", "warning");
       } else {
-        showToast("Hiba a mentés során: " + err.message, "danger");
+        showToast("Hiba a mentés során: " + (err.message || "Ismeretlen hiba"), "danger");
       }
     } finally {
       if (btn) btn.disabled = false;
     }
+}
+
+async function submitCreativeOpinion(requestId, opinionText) {
+  // 1. BIZTONSÁGI ELLENŐRZÉS: Tényleg Adél (vagy egy Admin) van bejelentkezve?
+  const adelEmail = 'onofri-varga.adel@spicecommunication.hu'; // Itt add meg a pontos e-mail címét!
+  const myEmail = typeof cleanEmail === 'function' 
+    ? cleanEmail(currentUserProfile?.email) 
+    : String(currentUserProfile?.email || '').toLowerCase().trim();
+
+  const isAdel = myEmail === adelEmail;
+  const isAdmin = String(currentUserProfile?.jogosultsag || '').toLowerCase().includes('admin');
+
+  if (!isAdel && !isAdmin) {
+    showToast("Nincs jogosultságod a kreatív kérelmek véleményezéséhez!", "danger");
+    return;
+  }
+
+  if (!opinionText || opinionText.trim() === '') {
+    showToast("Kérlek írj egy rövid véleményt a továbbítás előtt!", "warning");
+    return;
+  }
+
+  try {
+    // 2. Kérelem adatainak lekérése
+    const { data: req, error: fErr } = await supabaseClient
+      .from('leave_requests')
+      .select('*')
+      .eq('id', requestId)
+      .single();
+
+    if (fErr || !req) throw new Error("Kérelem nem található.");
+
+    // A véleményező neve (Adél neve a profiljából, vagy tartalékként fix szöveg)
+    const reviewerName = currentUserProfile?.nev || 'Varga Adél';
+    const formattedOpinion = `[${reviewerName} szakmai véleménye]: ${opinionText.trim()}`;
+    const updatedMegjegyzes = req.megjegyzes ? `${req.megjegyzes}\n\n${formattedOpinion}` : formattedOpinion;
+
+    // A következő bíráló a korábban elmentett final_approver_email, vagy ha az hiányzik, a rendes felettes
+    const nextApprover = req.final_approver_email || getNextApproverEmail({ email: req.user_email });
+
+    // 3. Kérelem frissítése: átirányítás a feletteshez 'pending_level1' státusszal
+    const { error: uErr } = await supabaseClient
+      .from('leave_requests')
+      .update({
+        status: 'pending_level1',
+        approver_email: nextApprover,
+        megjegyzes: updatedMegjegyzes
+      })
+      .eq('id', requestId);
+
+    if (uErr) throw uErr;
+
+    showToast("Vélemény sikeresen rögzítve, kérelem továbbítva a felettesnek!", "success");
+
+    // 4. E-mail értesítés a felettesnek Adél véleményével együtt
+    const subject = `Új szabadság kérelem (Véleményezve) - ${req.nev}`;
+    const bodyText = `Szia!\n\n${req.nev} távolléti kérelmet nyújtott be (${req.kezdo_datum} - ${req.veg_datum}).\n\n${formattedOpinion}`;
+
+    if (typeof sendAutomatedEmail === 'function') {
+      sendAutomatedEmail(nextApprover, subject, bodyText, bodyText.replace(/\n/g, '<br>'));
+    }
+
+    // Felület frissítése (hogy eltűnjön a listából)
+    if (typeof loadPendingApprovals === 'function') {
+      await loadPendingApprovals();
+    }
+
+  } catch (err) {
+    console.error("Hiba a véleményezés során:", err);
+    showToast("Hiba történt: " + err.message, "danger");
+  }
 }
 
   function check15DayRule() {
@@ -7761,6 +7845,7 @@ function getWeekdayOvertimeBreakdown(userWorkLogs, dailyLimit = 8, validityDays 
 
   return overtimeDays;
 }
+
 
 </script>
 
