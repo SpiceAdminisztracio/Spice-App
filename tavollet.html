@@ -2884,7 +2884,7 @@ async function finalizeAndSaveRequest(reqData, btn) {
       nextApprover = 'admin.oranyilvantartas@spicecommunication.hu';
       initialStatus = 'approved';
     } else if (isCreativeUser) {
-      const adelEmail = 'onofri-varga.adel@spicecommunication.hu';
+      const adelEmail = 'varga.adel@spicecommunication.hu';
       nextApprover = adelEmail;
       initialStatus = 'pending_creative_review';
       reqData.final_approver_email = targetLeaderEmail;
@@ -4553,11 +4553,11 @@ async function loadTeamBalances() {
     addOpGroup(prof.latott_csoportok, myOpGroups);
     addOpGroup(prof.csoport, myOpGroups);
 
-    // 🎯 EGYENLEGEK SZIGORÚ RANGSOR SZŰRÉSE
+    // 🎯 EGYENLEGEK SZIGORÚ RANGSOR ÉS LÁTHATÓSÁG SZŰRÉSE
     let teamProfiles = (profiles || []).filter(emp => {
       const empEmail = typeof cleanEmail === 'function' ? cleanEmail(emp.email) : String(emp.email || '').toLowerCase().trim();
       
-      // Saját magadat kizárjuk az egyenlegek közül
+      // 1. Saját magadat kizárjuk az egyenlegek közül
       if (myEmail && empEmail && empEmail === myEmail) return false;
 
       const empRole = safeNorm(emp.jogosultsag || emp.role || emp.pozicio || '');
@@ -4566,17 +4566,31 @@ async function loadTeamBalances() {
       const isEmpLeader = empRole.includes('lead') || empRole.includes('head') || empRole.includes('vezeto');
       const isEmpCsv = empRole.includes('csoportvez') || empRole.includes('csv');
 
-      // 1. CSOPORTVEZETŐ (CSV) SZABÁLY: Csak sima USER-eket láthat!
-      if (isMyRoleCsv) {
-        if (isEmpBoss || isEmpManager || isEmpLeader || isEmpCsv) return false;
+      // 2. KÖZVETLEN FELETTESI LÁNC ELLENŐRZÉSE
+      const empM = typeof cleanEmail === 'function' ? cleanEmail(emp.manager_email) : String(emp.manager_email || '').toLowerCase().trim();
+      const empL = typeof cleanEmail === 'function' ? cleanEmail(emp.leader_email) : String(emp.leader_email || '').toLowerCase().trim();
+      const empC = typeof cleanEmail === 'function' ? cleanEmail(emp.csoportvezeto_email) : String(emp.csoportvezeto_email || '').toLowerCase().trim();
+
+      const isDirectSub = myEmail && (
+        empM.includes(myEmail) ||
+        empL.includes(myEmail) ||
+        empC.includes(myEmail)
+      );
+
+      // 3. VEZETŐK LÁTHATÓSÁGÁNAK SZIGORÍTÁSA
+      // Ha a célzott ember "Vezetőség" tag (Leader, Manager, Boss, Csv), akkor KIZÁRÓLAG akkor láthatod,
+      // ha direktben a felettese vagy (isDirectSub). A "latott_csoportok" átfedés itt nem jogosít fel egyenrangú vezetők megtekintésére!
+      if (isEmpBoss || isEmpManager || isEmpLeader || isEmpCsv) {
+        if (!isDirectSub && !isMyRoleAdmin) return false;
       }
 
-      // 2. LEADER SZABÁLY: Csak USER-eket és CSOPORTVEZETŐKET láthat!
-      if (isMyRoleLeader) {
-        if (isEmpBoss || isEmpManager || isEmpLeader) return false;
-      }
+      // 4. CSOPORTVEZETŐ (CSV) SZABÁLY: Csak sima USER-eket láthat!
+      if (isMyRoleCsv && (isEmpBoss || isEmpManager || isEmpLeader || isEmpCsv)) return false;
 
-      // 3. MANAGER SZABÁLY: Ha van a csoportban Lead/CSV, csak őket látja. Ha nincs, látja a dolgozókat is!
+      // 5. LEADER SZABÁLY: Csak USER-eket és CSOPORTVEZETŐKET láthat!
+      if (isMyRoleLeader && (isEmpBoss || isEmpManager || isEmpLeader)) return false;
+
+      // 6. MANAGER SZABÁLY: Ha van a csoportban Lead/CSV, csak őket látja. Ha nincs, látja a dolgozókat is!
       if (isMyRoleManager) {
         if (isEmpBoss || isEmpManager) return false;
 
@@ -4589,23 +4603,12 @@ async function loadTeamBalances() {
           return r.includes('lead') || r.includes('head') || r.includes('csoportvez') || r.includes('csv');
         });
 
-        if (hasSubLeaderInGroup && !isEmpLeader && !isEmpCsv) return false;
+        if (hasSubLeaderInGroup && !isEmpLeader && !isEmpCsv && !isDirectSub) return false;
       }
-
-      // 4. KÖZVETLEN FELETTESI LÁNC ELLENŐRZÉSE
-      const empM = typeof cleanEmail === 'function' ? cleanEmail(emp.manager_email) : String(emp.manager_email || '').toLowerCase().trim();
-      const empL = typeof cleanEmail === 'function' ? cleanEmail(emp.leader_email) : String(emp.leader_email || '').toLowerCase().trim();
-      const empC = typeof cleanEmail === 'function' ? cleanEmail(emp.csoportvezeto_email) : String(emp.csoportvezeto_email || '').toLowerCase().trim();
-
-      const isDirectSub = myEmail && (
-        empM === myEmail ||
-        empL === myEmail ||
-        empC === myEmail
-      );
 
       if (isDirectSub) return true;
 
-      // 5. OPERATÍV CSOPORT ÁTFEDÉS ELLENŐRZÉSE
+      // 7. OPERATÍV CSOPORT ÁTFEDÉS ELLENŐRZÉSE (Beosztottak esetén)
       const empOpGroups = new Set();
       addOpGroup(emp.latott_csoportok, empOpGroups);
       addOpGroup(emp.csoport, empOpGroups);

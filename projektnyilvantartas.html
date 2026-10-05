@@ -2493,6 +2493,116 @@ async function getClientYearlyReportFromSupabase(clientName) {
     return b;
   }
 
+  function getSupervisedProfilesForUser(allProfiles, currentProfile, includeSelf = true) {
+  if (!currentProfile || !Array.isArray(allProfiles)) return [];
+
+  const cleanFn = (s) => String(s || '').replace(/"/g, '').trim().toLowerCase();
+  const normFn = (s) => typeof normalizeStr === 'function' ? normalizeStr(s) : String(s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const cleanG = (s) => normFn(s).replace(/\bcsapat\b/g, '').replace(/[\s\-_]+/g, '').trim();
+
+  const myEmail = cleanFn(currentProfile.email);
+  const META_GROUPS = ['vezetoseg', 'leader', 'vezeto', 'manager', 'boss', 'egyeb', 'admin', 'menedzsment'];
+
+  const rawRole = normFn(currentProfile.jogosultsag || currentProfile.role || currentProfile.pozicio || '');
+  const isAdmin = rawRole.includes('admin') || rawRole.includes('boss');
+  const isManager = (rawRole.includes('manag') || rawRole.includes('mgr')) && !isAdmin;
+  const isLeader = (rawRole.includes('lead') || rawRole.includes('head') || rawRole.includes('vezeto')) && !isManager && !isAdmin;
+  const isCsv = (rawRole.includes('csoportvez') || rawRole.includes('csv')) && !isLeader && !isManager && !isAdmin;
+
+  // Saját operatív csoportok kigyűjtése (META csoportok nélkül)
+  const myOpGroups = new Set();
+  const addOpGroup = (rawGroup) => {
+    if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
+    String(rawGroup).split(',').forEach(g => {
+      const c = cleanG(g);
+      if (c && !META_GROUPS.includes(c)) myOpGroups.add(c);
+    });
+  };
+
+  addOpGroup(currentProfile.latott_csoportok);
+  addOpGroup(currentProfile.csoport);
+
+  if (window.delegatedGroups && Array.isArray(window.delegatedGroups)) {
+    window.delegatedGroups.forEach(g => addOpGroup(g));
+  }
+
+  // Közvetlen felettesi lánc ellenőrzése
+  const isDirectSub = (p) => {
+    if (!myEmail) return false;
+    const checkList = (str) => {
+      if (!str) return false;
+      return String(str).split(',').map(e => cleanFn(e)).includes(myEmail);
+    };
+    return checkList(p.manager_email) || checkList(p.leader_email) || checkList(p.csoportvezeto_email);
+  };
+
+  if (isAdmin) {
+    return includeSelf ? allProfiles : allProfiles.filter(p => cleanFn(p.email) !== myEmail);
+  }
+
+  return allProfiles.filter(p => {
+    const pEmail = cleanFn(p.email);
+
+    if (pEmail && pEmail === myEmail) {
+      return includeSelf;
+    }
+
+    const empRoleRaw = normFn(p.jogosultsag || p.role || p.pozicio || '');
+    const empGroupRaw = normFn(p.csoport || '');
+
+    const isEmpBoss = empRoleRaw.includes('boss') || empRoleRaw.includes('admin') || empRoleRaw.includes('igazgato');
+    const isEmpManager = empRoleRaw.includes('manag') || empRoleRaw.includes('mgr');
+    const isEmpLeader = empRoleRaw.includes('lead') || empRoleRaw.includes('head') || empRoleRaw.includes('vezeto');
+    const isEmpCsv = empRoleRaw.includes('csoportvez') || empRoleRaw.includes('csv');
+    const isEmpMetaGroup = META_GROUPS.includes(cleanG(empGroupRaw));
+
+    const isEmpAnyLeaderOrMeta = isEmpBoss || isEmpManager || isEmpLeader || isEmpCsv || isEmpMetaGroup;
+    const directSub = isDirectSub(p);
+
+    // SZABÁLY 1: Ha a célzott személy vezető vagy Vezetőség tag, CSÁK AKKOR látható, ha a jelenlegi user a KÖZVETLEN főnöke!
+    if (isEmpAnyLeaderOrMeta) {
+      return directSub;
+    }
+
+    // SZABÁLY 2: Hierarchiai megkötések sima dolgozókra
+    if (isCsv) {
+      // CSV csak sima dolgozót láthat
+    } else if (isLeader) {
+      // Leader sima dolgozót láthat
+    } else if (isManager) {
+      const empGroupClean = cleanG(p.csoport || '');
+      const hasSubLeaderInGroup = allProfiles.some(subP => {
+        if (cleanG(subP.csoport || '') !== empGroupClean) return false;
+        const r = normFn(subP.jogosultsag || subP.role || subP.pozicio || '');
+        return r.includes('lead') || r.includes('head') || r.includes('csoportvez') || r.includes('csv');
+      });
+
+      if (hasSubLeaderInGroup && !directSub) return false;
+    }
+
+    if (directSub) return true;
+
+    // SZABÁLY 3: Operatív csoport átfedés (Vezetőség csoport átfedéseket figyelmen kívül hagyva)
+    const empOpGroups = new Set();
+    const addEmpOpGroup = (rawGroup) => {
+      if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
+      String(rawGroup).split(',').forEach(g => {
+        const c = cleanG(g);
+        if (c && !META_GROUPS.includes(c)) empOpGroups.add(c);
+      });
+    };
+
+    addEmpOpGroup(p.latott_csoportok);
+    addEmpOpGroup(p.csoport);
+
+    for (const g of empOpGroups) {
+      if (myOpGroups.has(g)) return true;
+    }
+
+    return false;
+  });
+}
+
   async function loadTeamMonthlyStatus() {
   const m = document.getElementById('teamMonth') ? document.getElementById('teamMonth').value : '';
   const list = document.getElementById('teamStatusList');
@@ -2585,7 +2695,7 @@ async function getClientYearlyReportFromSupabase(clientName) {
     const isLeader = (rawRole.includes('lead') || rawRole.includes('head') || rawRole.includes('vezeto')) && !isManager && !isAdmin;
     const isCsv = (rawRole.includes('csoportvez') || rawRole.includes('csv')) && !isLeader && !isManager && !isAdmin;
 
-    // Felügyelt operatív csoportok (kizárólag a saját profilból feltöltve)
+    // Felügyelt operatív csoportok (kizárólag a saját profilból feltöltve, META csoportok nélkül)
     const myOpGroups = new Set();
     const cleanStr = (s) => (typeof normalizeStr === 'function' ? normalizeStr(s) : String(s).toLowerCase()).replace(/\bcsapat\b/g, '').replace(/[\s\-_]+/g, '').trim();
     const META_GROUPS = ['vezetoseg', 'leader', 'vezeto', 'manager', 'boss', 'egyeb', 'admin', 'menedzsment'];
@@ -2612,26 +2722,53 @@ async function getClientYearlyReportFromSupabase(clientName) {
         if (pEmail === myEmail) return true;
 
         const empRoleRaw = typeof normalizeStr === 'function' ? normalizeStr(p.jogosultsag || p.role || p.pozicio || '') : String(p.jogosultsag || p.role || '').toLowerCase();
+        const empGroupClean = cleanStr(p.csoport || '');
+        const empDispGroupClean = cleanStr(p.display_csoport || '');
+
         const isEmpBoss = empRoleRaw.includes('boss') || empRoleRaw.includes('admin') || empRoleRaw.includes('igazgato');
         const isEmpManager = empRoleRaw.includes('manag') || empRoleRaw.includes('mgr');
         const isEmpLeader = empRoleRaw.includes('lead') || empRoleRaw.includes('head') || empRoleRaw.includes('vezeto');
         const isEmpCsv = empRoleRaw.includes('csoportvez') || empRoleRaw.includes('csv');
+        const isEmpVezetoseg = META_GROUPS.includes(empGroupClean) || META_GROUPS.includes(empDispGroupClean);
 
-        // 🎯 1. RANGSOR ALAPÚ KIZÁRÁSOK
-        if (isCsv && (isEmpBoss || isEmpManager || isEmpLeader || isEmpCsv)) return false; // CSV csak USER-t láthat
-        if (isLeader && (isEmpBoss || isEmpManager || isEmpLeader)) return false; // LEAD csak USER-t és CSV-t láthat
-        if (isManager && (isEmpBoss || isEmpManager)) return false; // MGR csak LEAD, CSV, USER-t láthat (más MGR-t / Boss-t nem)
+        const isEmpAnyLeaderOrMeta = isEmpBoss || isEmpManager || isEmpLeader || isEmpCsv || isEmpVezetoseg;
 
-        // 🎯 2. KÖZVETLEN FELETTESI LÁNC ELLENŐRZÉSE (PONTOS EGYEZÉS)
-        const empM = cleanEmail(p.manager_email);
-        const empL = cleanEmail(p.leader_email);
-        const empC = cleanEmail(p.csoportvezeto_email);
+        // 🎯 1. KÖZVETLEN FELETTESI LÁNC ELLENŐRZÉSE
+        const isDirectSub = Boolean(myEmail) && (
+          (p.manager_email && cleanEmail(p.manager_email).includes(myEmail)) ||
+          (p.leader_email && cleanEmail(p.leader_email).includes(myEmail)) ||
+          (p.csoportvezeto_email && cleanEmail(p.csoportvezeto_email).includes(myEmail))
+        );
 
-        if (myEmail && (empM === myEmail || empL === myEmail || empC === myEmail)) {
-          return true;
+        // 🎯 2. VEZETŐK ÉS VEZETŐSÉG TAGJAINAK SZIGORÍTÁSA
+        // Ha a vizsgált személy bármilyen vezető vagy a "Vezetőség" csoporthoz tartozik,
+        // KIZÁRÓLAG akkor láthatja a felettes, ha közvetlenül ő van beállítva a főnökének (isDirectSub).
+        if (isEmpAnyLeaderOrMeta) {
+          if (!isDirectSub && !isAdmin) return false;
         }
 
-        // 🎯 3. OPERATÍV CSOPORT ÁTFEDÉS ELLENŐRZÉSE
+        // 🎯 3. CSOPORTVEZETŐ (CSV) SZABÁLY: Csak sima USER-eket láthat!
+        if (isCsv && isEmpAnyLeaderOrMeta) return false;
+
+        // 🎯 4. LEADER SZABÁLY: Csak USER-eket és CSOPORTVEZETŐKET láthat!
+        if (isLeader && (isEmpBoss || isEmpManager || isEmpLeader)) return false;
+
+        // 🎯 5. MANAGER SZABÁLY: Ha van a csoportban Lead/CSV, csak őket látja (és a direkt beosztottjait).
+        if (isManager) {
+          if (isEmpBoss || isEmpManager) return false;
+
+          const hasSubLeaderInGroup = (allProfiles || []).some(subP => {
+            if (cleanStr(subP.csoport || '') !== empGroupClean) return false;
+            const r = typeof normalizeStr === 'function' ? normalizeStr(subP.jogosultsag || subP.role || subP.pozicio || '') : String(subP.jogosultsag || subP.role || '').toLowerCase();
+            return r.includes('lead') || r.includes('head') || r.includes('csoportvez') || r.includes('csv');
+          });
+
+          if (hasSubLeaderInGroup && !isEmpLeader && !isEmpCsv && !isDirectSub) return false;
+        }
+
+        if (isDirectSub) return true;
+
+        // 🎯 6. OPERATÍV CSOPORT ÁTFEDÉS ELLENŐRZÉSE (Beosztottak esetén)
         const empOpGroups = new Set();
         const addEmpOpGroup = (rawGroup) => {
           if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
@@ -2971,77 +3108,109 @@ async function checkMissingRecords(evt) {
       const prof = window.currentUserProfile || currentUserProfile || {};
       const myEmail = cleanEmail(prof.email);
 
-      const rawRole = typeof normalizeStr === 'function' ? normalizeStr(prof.jogosultsag || prof.role || prof.pozicio || '') : String(prof.jogosultsag || prof.role || '').toLowerCase();
-      
-      const isAdmin = rawRole.includes('admin') || rawRole.includes('boss');
-      const isManager = (rawRole.includes('manag') || rawRole.includes('mgr')) && !isAdmin;
-      const isLeader = (rawRole.includes('lead') || rawRole.includes('head') || rawRole.includes('vezeto')) && !isManager && !isAdmin;
-      const isCsv = (rawRole.includes('csoportvez') || rawRole.includes('csv')) && !isLeader && !isManager && !isAdmin;
-
-      // Felügyelt operatív csoportok (kizárólag a saját profilból feltöltve)
-      const myOpGroups = new Set();
-      const cleanStr = (s) => (typeof normalizeStr === 'function' ? normalizeStr(s) : String(s).toLowerCase()).replace(/\bcsapat\b/g, '').replace(/[\s\-_]+/g, '').trim();
-      const META_GROUPS = ['vezetoseg', 'leader', 'vezeto', 'manager', 'boss', 'egyeb', 'admin', 'menedzsment'];
-
-      const addOpGroup = (rawGroup) => {
-        if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
-        String(rawGroup).split(',').forEach(g => {
-          const c = cleanStr(g);
-          if (c && !META_GROUPS.includes(c)) myOpGroups.add(c);
-        });
-      };
-
-      addOpGroup(prof.latott_csoportok);
-      addOpGroup(prof.csoport);
-
+      // 🎯 SZIGORÍTOTT VEZETŐI ÉS CSOPORT SZŰRÉS MEGHÍVÁSA (SAJÁT MAGA KISZŰRÉSÉVEL)
       let profiles = [];
-      if (isAdmin) {
-        profiles = allProfiles;
+
+      if (typeof getSupervisedProfilesForUser === 'function') {
+        profiles = getSupervisedProfilesForUser(allProfiles, prof, false);
       } else {
-        profiles = allProfiles.filter(p => {
-          const pEmail = cleanEmail(p.email);
-          
-          // Hiányzó-ellenőrzésnél saját magát kiszűri
-          if (pEmail === myEmail) return false;
+        const rawRole = typeof normalizeStr === 'function' ? normalizeStr(prof.jogosultsag || prof.role || prof.pozicio || '') : String(prof.jogosultsag || prof.role || '').toLowerCase();
+        
+        const isAdmin = rawRole.includes('admin') || rawRole.includes('boss');
+        const isManager = (rawRole.includes('manag') || rawRole.includes('mgr')) && !isAdmin;
+        const isLeader = (rawRole.includes('lead') || rawRole.includes('head') || rawRole.includes('vezeto')) && !isManager && !isAdmin;
+        const isCsv = (rawRole.includes('csoportvez') || rawRole.includes('csv')) && !isLeader && !isManager && !isAdmin;
 
-          const empRoleRaw = typeof normalizeStr === 'function' ? normalizeStr(p.jogosultsag || p.role || p.pozicio || '') : String(p.jogosultsag || p.role || '').toLowerCase();
-          const isEmpBoss = empRoleRaw.includes('boss') || empRoleRaw.includes('admin') || empRoleRaw.includes('igazgato');
-          const isEmpManager = empRoleRaw.includes('manag') || empRoleRaw.includes('mgr');
-          const isEmpLeader = empRoleRaw.includes('lead') || empRoleRaw.includes('head') || empRoleRaw.includes('vezeto');
-          const isEmpCsv = empRoleRaw.includes('csoportvez') || empRoleRaw.includes('csv');
+        const myOpGroups = new Set();
+        const cleanStr = (s) => (typeof normalizeStr === 'function' ? normalizeStr(s) : String(s).toLowerCase()).replace(/\bcsapat\b/g, '').replace(/[\s\-_]+/g, '').trim();
+        const META_GROUPS = ['vezetoseg', 'leader', 'vezeto', 'manager', 'boss', 'egyeb', 'admin', 'menedzsment'];
 
-          // 🎯 1. RANGSOR ALAPÚ KIZÁRÁSOK
-          if (isCsv && (isEmpBoss || isEmpManager || isEmpLeader || isEmpCsv)) return false; 
-          if (isLeader && (isEmpBoss || isEmpManager || isEmpLeader)) return false; 
-          if (isManager && (isEmpBoss || isEmpManager)) return false; 
+        const addOpGroup = (rawGroup) => {
+          if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
+          String(rawGroup).split(',').forEach(g => {
+            const c = cleanStr(g);
+            if (c && !META_GROUPS.includes(c)) myOpGroups.add(c);
+          });
+        };
 
-          // 🎯 2. KÖZVETLEN FELETTESI LÁNC ELLENŐRZÉSE (PONTOS EGYEZÉS)
-          const empM = cleanEmail(p.manager_email);
-          const empL = cleanEmail(p.leader_email);
-          const empC = cleanEmail(p.csoportvezeto_email);
+        addOpGroup(prof.latott_csoportok);
+        addOpGroup(prof.csoport);
 
-          if (myEmail && (empM === myEmail || empL === myEmail || empC === myEmail)) {
-            return true;
-          }
+        if (isAdmin) {
+          profiles = allProfiles.filter(p => cleanEmail(p.email) !== myEmail);
+        } else {
+          profiles = allProfiles.filter(p => {
+            const pEmail = cleanEmail(p.email);
+            
+            // Saját magát kiszűri
+            if (pEmail === myEmail) return false;
 
-          // 🎯 3. OPERATÍV CSOPORT ÁTFEDÉS ELLENŐRZÉSE
-          const empOpGroups = new Set();
-          const addEmpOpGroup = (rawGroup) => {
-            if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
-            String(rawGroup).split(',').forEach(g => {
-              const c = cleanStr(g);
-              if (c && !META_GROUPS.includes(c)) empOpGroups.add(c);
-            });
-          };
-          addEmpOpGroup(p.latott_csoportok);
-          addEmpOpGroup(p.csoport);
+            const empRoleRaw = typeof normalizeStr === 'function' ? normalizeStr(p.jogosultsag || p.role || p.pozicio || '') : String(p.jogosultsag || p.role || '').toLowerCase();
+            const empGroupClean = cleanStr(p.csoport || '');
+            const empDispGroupClean = cleanStr(p.display_csoport || '');
 
-          for (const g of empOpGroups) {
-            if (myOpGroups.has(g)) return true;
-          }
+            const isEmpBoss = empRoleRaw.includes('boss') || empRoleRaw.includes('admin') || empRoleRaw.includes('igazgato');
+            const isEmpManager = empRoleRaw.includes('manag') || empRoleRaw.includes('mgr');
+            const isEmpLeader = empRoleRaw.includes('lead') || empRoleRaw.includes('head') || empRoleRaw.includes('vezeto');
+            const isEmpCsv = empRoleRaw.includes('csoportvez') || empRoleRaw.includes('csv');
+            const isEmpVezetoseg = META_GROUPS.includes(empGroupClean) || META_GROUPS.includes(empDispGroupClean);
 
-          return false;
-        });
+            const isEmpAnyLeaderOrMeta = isEmpBoss || isEmpManager || isEmpLeader || isEmpCsv || isEmpVezetoseg;
+
+            // 🎯 1. KÖZVETLEN FELETTESI LÁNC ELLENŐRZÉSE
+            const isDirectSub = Boolean(myEmail) && (
+              (p.manager_email && cleanEmail(p.manager_email).includes(myEmail)) ||
+              (p.leader_email && cleanEmail(p.leader_email).includes(myEmail)) ||
+              (p.csoportvezeto_email && cleanEmail(p.csoportvezeto_email).includes(myEmail))
+            );
+
+            // 🎯 2. VEZETŐK ÉS VEZETŐSÉG TAGJAINAK SZIGORÍTÁSA
+            // Ha a vizsgált ember bármilyen vezető vagy a "Vezetőség" csoporthoz tartozik,
+            // KIZÁRÓLAG akkor láthatja a felettes, ha közvetlenül ő van beállítva a főnökének (isDirectSub).
+            if (isEmpAnyLeaderOrMeta) {
+              return isDirectSub;
+            }
+
+            // 🎯 3. CSOPORTVEZETŐ (CSV) SZABÁLY: Csak sima USER-eket láthat!
+            if (isCsv && isEmpAnyLeaderOrMeta) return false;
+
+            // 🎯 4. LEADER SZABÁLY: Csak USER-eket és CSOPORTVEZETŐKET láthat!
+            if (isLeader && (isEmpBoss || isEmpManager || isEmpLeader)) return false;
+
+            // 🎯 5. MANAGER SZABÁLY: Ha van a csoportban Lead/CSV, csak őket látja (és a direkt beosztottjait).
+            if (isManager) {
+              if (isEmpBoss || isEmpManager) return false;
+
+              const hasSubLeaderInGroup = (allProfiles || []).some(subP => {
+                if (cleanStr(subP.csoport || '') !== empGroupClean) return false;
+                const r = typeof normalizeStr === 'function' ? normalizeStr(subP.jogosultsag || subP.role || subP.pozicio || '') : String(subP.jogosultsag || subP.role || '').toLowerCase();
+                return r.includes('lead') || r.includes('head') || r.includes('csoportvez') || r.includes('csv');
+              });
+
+              if (hasSubLeaderInGroup && !isEmpLeader && !isEmpCsv && !isDirectSub) return false;
+            }
+
+            if (isDirectSub) return true;
+
+            // 🎯 6. OPERATÍV CSOPORT ÁTFEDÉS ELLENŐRZÉSE (Beosztottak esetén)
+            const empOpGroups = new Set();
+            const addEmpOpGroup = (rawGroup) => {
+              if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
+              String(rawGroup).split(',').forEach(g => {
+                const c = cleanStr(g);
+                if (c && !META_GROUPS.includes(c)) empOpGroups.add(c);
+              });
+            };
+            addEmpOpGroup(p.latott_csoportok);
+            addEmpOpGroup(p.csoport);
+
+            for (const g of empOpGroups) {
+              if (myOpGroups.has(g)) return true;
+            }
+
+            return false;
+          });
+        }
       }
 
       const endY = lastDayToCheck.getFullYear();
@@ -4849,58 +5018,102 @@ function fixTeamStatPills() {
     console.error("Hiba az adatok előkészítésekor:", e);
   }
 
-  const role = typeof normalizeStr === 'function' 
-    ? normalizeStr(currentUserProfile?.jogosultsag || currentUserProfile?.role || 'user')
-    : String(currentUserProfile?.jogosultsag || currentUserProfile?.role || 'user').toLowerCase();
-
-  const isAdmin = role.includes('admin') || role.includes('boss');
-  const isLeaderOrManager = role.includes('csoportvez') || role.includes('lead') || role.includes('manag') || isAdmin;
-
-  const myEmail = typeof cleanEmail === 'function' ? cleanEmail(currentUserProfile?.email) : String(currentUserProfile?.email || '').toLowerCase().trim();
-  const myGroup = typeof normalizeStr === 'function' ? normalizeStr(currentUserProfile?.csoport || '') : String(currentUserProfile?.csoport || '').toLowerCase();
-  const latottGroups = String(currentUserProfile?.latott_csoportok || '')
-    .split(',')
-    .map(g => typeof normalizeStr === 'function' ? normalizeStr(g) : g.toLowerCase().trim())
-    .filter(Boolean);
-
   const activeProfiles = (window.tsProfilesData || []).filter(p => {
     const st = typeof normalizeStr === 'function' ? normalizeStr(p.statusz || 'aktív') : String(p.statusz || 'aktív').toLowerCase();
     return st === 'aktiv' || st === 'aktív';
   });
 
+  // 🎯 SZIGORÚ LÁTHATÓSÁGI SZŰRÉS (EGYENRANGÚ VEZETŐK ÉS "VEZETŐSÉG" CSOPORT KISZIVÁRGÁSA ELLEN)
   let viewableProfiles = [];
 
-  if (isAdmin) {
-    viewableProfiles = activeProfiles;
+  if (typeof getSupervisedProfilesForUser === 'function') {
+    viewableProfiles = getSupervisedProfilesForUser(activeProfiles, currentUserProfile, true);
   } else {
-    viewableProfiles = activeProfiles.filter(p => {
-      const pEmail = typeof cleanEmail === 'function' ? cleanEmail(p.email) : String(p.email || '').toLowerCase().trim();
-      if (pEmail && pEmail === myEmail) return true;
+    // Tartalék szigorú helyi szűrés (ha a központi getSupervisedProfilesForUser még nem lenne betöltve)
+    const myEmail = typeof cleanEmail === 'function' ? cleanEmail(currentUserProfile?.email) : String(currentUserProfile?.email || '').toLowerCase().trim();
+    const normFn = (s) => typeof normalizeStr === 'function' ? normalizeStr(s) : String(s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const cleanG = (s) => normFn(s).replace(/\bcsapat\b/g, '').replace(/[\s\-_]+/g, '').trim();
 
-      const mgr = typeof cleanEmail === 'function' ? cleanEmail(p.manager_email) : String(p.manager_email || '').toLowerCase();
-      const ldr = typeof cleanEmail === 'function' ? cleanEmail(p.leader_email) : String(p.leader_email || '').toLowerCase();
-      const csv = typeof cleanEmail === 'function' ? cleanEmail(p.csoportvezeto_email) : String(p.csoportvezeto_email || '').toLowerCase();
-      
-      if ((mgr && (mgr === myEmail || myEmail.includes(mgr))) ||
-          (ldr && (ldr === myEmail || myEmail.includes(ldr))) ||
-          (csv && (csv === myEmail || myEmail.includes(csv)))) {
-        return true;
-      }
+    const META_GROUPS = ['vezetoseg', 'leader', 'vezeto', 'manager', 'boss', 'egyeb', 'admin', 'menedzsment'];
+    const rawRole = normFn(currentUserProfile?.jogosultsag || currentUserProfile?.role || currentUserProfile?.pozicio || '');
+    const isAdmin = rawRole.includes('admin') || rawRole.includes('boss');
+    const isManager = (rawRole.includes('manag') || rawRole.includes('mgr')) && !isAdmin;
+    const isLeader = (rawRole.includes('lead') || rawRole.includes('head') || rawRole.includes('vezeto')) && !isManager && !isAdmin;
+    const isCsv = (rawRole.includes('csoportvez') || rawRole.includes('csv')) && !isLeader && !isManager && !isAdmin;
 
-      const pGroup = typeof normalizeStr === 'function' ? normalizeStr(p.csoport || '') : String(p.csoport || '').toLowerCase();
-      if (myGroup && pGroup && (pGroup === myGroup || pGroup.startsWith(myGroup) || myGroup.startsWith(pGroup))) {
-        return true;
-      }
+    const myOpGroups = new Set();
+    const addOpGroup = (rawGroup) => {
+      if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
+      String(rawGroup).split(',').forEach(g => {
+        const c = cleanG(g);
+        if (c && !META_GROUPS.includes(c)) myOpGroups.add(c);
+      });
+    };
+    addOpGroup(currentUserProfile?.latott_csoportok);
+    addOpGroup(currentUserProfile?.csoport);
 
-      if (latottGroups.length > 0 && pGroup && latottGroups.some(g => pGroup.includes(g) || g.includes(pGroup))) {
-        return true;
-      }
-
-      return false;
-    });
-
-    if (viewableProfiles.length <= 1 && isLeaderOrManager) {
+    if (isAdmin) {
       viewableProfiles = activeProfiles;
+    } else {
+      viewableProfiles = activeProfiles.filter(p => {
+        const pEmail = typeof cleanEmail === 'function' ? cleanEmail(p.email) : String(p.email || '').toLowerCase().trim();
+        if (pEmail && pEmail === myEmail) return true;
+
+        const mgr = typeof cleanEmail === 'function' ? cleanEmail(p.manager_email) : String(p.manager_email || '').toLowerCase();
+        const ldr = typeof cleanEmail === 'function' ? cleanEmail(p.leader_email) : String(p.leader_email || '').toLowerCase();
+        const csv = typeof cleanEmail === 'function' ? cleanEmail(p.csoportvezeto_email) : String(p.csoportvezeto_email || '').toLowerCase();
+
+        const isDirectSub = Boolean(myEmail) && (
+          (mgr && mgr.includes(myEmail)) ||
+          (ldr && ldr.includes(myEmail)) ||
+          (csv && csv.includes(myEmail))
+        );
+
+        const empRoleRaw = normFn(p.jogosultsag || p.role || p.pozicio || '');
+        const empGroupRaw = normFn(p.csoport || '');
+        const isEmpBoss = empRoleRaw.includes('boss') || empRoleRaw.includes('admin') || empRoleRaw.includes('igazgato');
+        const isEmpManager = empRoleRaw.includes('manag') || empRoleRaw.includes('mgr');
+        const isEmpLeader = empRoleRaw.includes('lead') || empRoleRaw.includes('head') || empRoleRaw.includes('vezeto');
+        const isEmpCsv = empRoleRaw.includes('csoportvez') || empRoleRaw.includes('csv');
+        const isEmpMetaGroup = META_GROUPS.includes(cleanG(empGroupRaw));
+
+        // Vezetők és Vezetőség tagjai kizárólag közvetlen felettesként láthatóak
+        if (isEmpBoss || isEmpManager || isEmpLeader || isEmpCsv || isEmpMetaGroup) {
+          return isDirectSub;
+        }
+
+        if (isCsv) return false;
+        if (isLeader && (isEmpBoss || isEmpManager || isEmpLeader)) return false;
+        if (isManager) {
+          if (isEmpBoss || isEmpManager) return false;
+          const empGroupClean = cleanG(p.csoport || '');
+          const hasSubLeaderInGroup = activeProfiles.some(subP => {
+            if (cleanG(subP.csoport || '') !== empGroupClean) return false;
+            const r = normFn(subP.jogosultsag || subP.role || subP.pozicio || '');
+            return r.includes('lead') || r.includes('head') || r.includes('csoportvez') || r.includes('csv');
+          });
+          if (hasSubLeaderInGroup && !isDirectSub) return false;
+        }
+
+        if (isDirectSub) return true;
+
+        const empOpGroups = new Set();
+        const addEmpOpGroup = (rawGroup) => {
+          if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
+          String(rawGroup).split(',').forEach(g => {
+            const c = cleanG(g);
+            if (c && !META_GROUPS.includes(c)) empOpGroups.add(c);
+          });
+        };
+        addEmpOpGroup(p.latott_csoportok);
+        addEmpOpGroup(p.csoport);
+
+        for (const g of empOpGroups) {
+          if (myOpGroups.has(g)) return true;
+        }
+
+        return false;
+      });
     }
   }
 
@@ -4923,7 +5136,10 @@ function fixTeamStatPills() {
   const groupSelect = document.getElementById('tsCreGroup');
 
   if (groupSelect) {
-    if (!isAdmin && userGroupCode !== 'ALL') {
+    const roleStr = typeof normalizeStr === 'function' ? normalizeStr(currentUserProfile?.jogosultsag || currentUserProfile?.role || '') : String(currentUserProfile?.jogosultsag || '').toLowerCase();
+    const isAdminUser = roleStr.includes('admin') || roleStr.includes('boss');
+
+    if (!isAdminUser && userGroupCode !== 'ALL') {
       groupSelect.value = userGroupCode;
       groupSelect.disabled = true;
     } else {
@@ -4933,7 +5149,6 @@ function fixTeamStatPills() {
 
   await onTsCreGroupChange();
 }
-
 let currentCreativeReqId = 0;
 
 async function onTsCreGroupChange() {
