@@ -2392,8 +2392,11 @@ function buildDecisionEmailHtml(dolgozoNeve, statusz, tipus, kezdoDatum, vegDatu
 
   let canSeeTeam, canSeeAdmin, canSeeOvertime, canSeePayroll;
 
-  // Egyedi látott fülek ellenőrzése
-  const customTabsRaw = String(profile.latott_fulek || '').trim().toLowerCase();
+  // 🎯 ÉKEZETMENTESÍTETT EGYEDI FÜLEK ELLENŐRZÉSE (normalizeStr)
+  const customTabsRaw = typeof normalizeStr === 'function' 
+    ? normalizeStr(profile.latott_fulek || '') 
+    : String(profile.latott_fulek || '').trim().toLowerCase();
+    
   const hasCustomTabs = customTabsRaw !== '' && customTabsRaw !== 'null' && customTabsRaw !== 'undefined';
 
   if (hasCustomTabs) {
@@ -2401,7 +2404,7 @@ function buildDecisionEmailHtml(dolgozoNeve, statusz, tipus, kezdoDatum, vegDatu
     canSeeTeam = customTabsRaw.includes('team') || customTabsRaw.includes('csapat');
     canSeeAdmin = customTabsRaw.includes('admin');
     canSeeOvertime = customTabsRaw.includes('overtime') || customTabsRaw.includes('tulmunka') || customTabsRaw.includes('biralat');
-    canSeePayroll = customTabsRaw.includes('payroll') || customTabsRaw.includes('berfejtes') || customTabsRaw.includes('berszamfejtes');
+    canSeePayroll = customTabsRaw.includes('payroll') || customTabsRaw.includes('berfejtes') || customTabsRaw.includes('berszamfejtes') || customTabsRaw.includes('berfej');
   } else {
     // Alapértelmezett szerepkör és pozíció alapú jogosultságok
     canSeeTeam = ['manager', 'leader', 'csoportvezeto', 'admin', 'boss'].includes(cleanRole);
@@ -2437,106 +2440,106 @@ function buildDecisionEmailHtml(dolgozoNeve, statusz, tipus, kezdoDatum, vegDatu
   if (mbPayroll) mbPayroll.classList.toggle('hidden', !canSeePayroll);
 }
 
-  async function loadMyRequests() {
-    if (!currentUserProfile || !currentUserProfile.email) return;
+async function loadMyRequests() {
+  if (!currentUserProfile || !currentUserProfile.email) return;
 
-    try {
-      const emailClean = currentUserProfile.email.toLowerCase().trim();
+  try {
+    const emailClean = currentUserProfile.email.toLowerCase().trim();
 
-      // 🎯 1. BIZTOS LEKÉRDEZÉS: KIZÁRÓLAG user_email ALAPJÁN (elkerülve az hiányzó oszlop miatti 400-as hibát)
-      const [reqRes, logRes, decRes] = await Promise.all([
-        supabaseClient.from('leave_requests').select('*').ilike('user_email', emailClean).order('kezdo_datum', { ascending: false }),
-        supabaseClient.from('work_logs').select('*').ilike('user_email', emailClean),
-        supabaseClient.from('overtime_decisions').select('*').ilike('user_email', emailClean)
-      ]);
+    // 🎯 1. BIZTOS LEKÉRDEZÉS: KIZÁRÓLAG user_email ALAPJÁN (elkerülve az hiányzó oszlop miatti 400-as hibát)
+    const [reqRes, logRes, decRes] = await Promise.all([
+      supabaseClient.from('leave_requests').select('*').ilike('user_email', emailClean).order('kezdo_datum', { ascending: false }),
+      supabaseClient.from('work_logs').select('*').ilike('user_email', emailClean),
+      supabaseClient.from('overtime_decisions').select('*').ilike('user_email', emailClean)
+    ]);
 
-      if (reqRes.error) console.error("Kérelmek lekérési hiba:", reqRes.error);
-      if (logRes.error) console.error("Work_logs lekérési hiba:", logRes.error);
-      if (decRes.error) console.error("Decisions lekérési hiba:", decRes.error);
+    if (reqRes.error) console.error("Kérelmek lekérési hiba:", reqRes.error);
+    if (logRes.error) console.error("Work_logs lekérési hiba:", logRes.error);
+    if (decRes.error) console.error("Decisions lekérési hiba:", decRes.error);
 
-      userRequestsCache = reqRes.data || [];
-      const userWorkLogs = logRes.data || [];
-      const userDecisions = decRes.data || [];
+    userRequestsCache = reqRes.data || [];
+    const userWorkLogs = logRes.data || [];
+    const userDecisions = decRes.data || [];
 
-      // Debug infó a konzolra
-      console.log(`[Saját Pult] Betöltött work_logs rekordok száma (${emailClean}):`, userWorkLogs.length);
+    // Debug infó a konzolra
+    console.log(`[Saját Pult] Betöltött work_logs rekordok száma (${emailClean}):`, userWorkLogs.length);
 
-      // 2. SZABADSÁG ÉS HO STATISZTIKÁK SZÁMÍTÁSA
-      const stats = calculateUserLeaveStats(currentUserProfile.email, userRequestsCache);
-      const now = new Date();
+    // 2. SZABADSÁG ÉS HO STATISZTIKÁK SZÁMÍTÁSA
+    const stats = calculateUserLeaveStats(currentUserProfile.email, userRequestsCache);
+    const now = new Date();
 
-      const tavalyiAlap = Number(currentUserProfile.tavalyi_keret) || 0;
-      const tavalyiMaradek = tavalyiAlap - stats.kivettTavalyi;
-      
-      if (document.getElementById('uiTavalyiAlap')) document.getElementById('uiTavalyiAlap').innerText = tavalyiAlap;
-      if (document.getElementById('uiTavalyiKivett')) document.getElementById('uiTavalyiKivett').innerText = stats.kivettTavalyi;
-      if (document.getElementById('uiTavalyiFennmarado')) document.getElementById('uiTavalyiFennmarado').innerText = tavalyiMaradek + " nap";
+    const tavalyiAlap = Number(currentUserProfile.tavalyi_keret) || 0;
+    const tavalyiMaradek = tavalyiAlap - stats.kivettTavalyi;
+    
+    if (document.getElementById('uiTavalyiAlap')) document.getElementById('uiTavalyiAlap').innerText = tavalyiAlap;
+    if (document.getElementById('uiTavalyiKivett')) document.getElementById('uiTavalyiKivett').innerText = stats.kivettTavalyi;
+    if (document.getElementById('uiTavalyiFennmarado')) document.getElementById('uiTavalyiFennmarado').innerText = tavalyiMaradek + " nap";
 
-      const ideiAlap = Number(currentUserProfile.eves_keret) || 0;
-      const ideiMaradek = ideiAlap - stats.kivettIdei;
+    const ideiAlap = Number(currentUserProfile.eves_keret) || 0;
+    const ideiMaradek = ideiAlap - stats.kivettIdei;
 
-      const startOfYear = new Date(now.getFullYear(), 0, 1);
-      const endOfYear = new Date(now.getFullYear(), 11, 31);
-      const dayOfYear = Math.floor((now - startOfYear) / (1000 * 60 * 60 * 24)) + 1;
-      const totalDaysInYear = Math.floor((endOfYear - startOfYear) / (1000 * 60 * 60 * 24)) + 1;
-      const idoaranyosKotelezo = Math.round(ideiAlap * (dayOfYear / totalDaysInYear));
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const endOfYear = new Date(now.getFullYear(), 11, 31);
+    const dayOfYear = Math.floor((now - startOfYear) / (1000 * 60 * 60 * 24)) + 1;
+    const totalDaysInYear = Math.floor((endOfYear - startOfYear) / (1000 * 60 * 60 * 24)) + 1;
+    const idoaranyosKotelezo = Math.round(ideiAlap * (dayOfYear / totalDaysInYear));
 
-      if (document.getElementById('uiAlapKeret')) document.getElementById('uiAlapKeret').innerText = ideiAlap + " nap";
-      if (document.getElementById('uiIdeiKivett')) document.getElementById('uiIdeiKivett').innerText = stats.kivettIdei;
-      if (document.getElementById('uiIdoaranyos')) document.getElementById('uiIdoaranyos').innerText = idoaranyosKotelezo + " nap";
-      if (document.getElementById('uiEvesKeret')) document.getElementById('uiEvesKeret').innerText = ideiMaradek + " nap";
+    if (document.getElementById('uiAlapKeret')) document.getElementById('uiAlapKeret').innerText = ideiAlap + " nap";
+    if (document.getElementById('uiIdeiKivett')) document.getElementById('uiIdeiKivett').innerText = stats.kivettIdei;
+    if (document.getElementById('uiIdoaranyos')) document.getElementById('uiIdoaranyos').innerText = idoaranyosKotelezo + " nap";
+    if (document.getElementById('uiEvesKeret')) document.getElementById('uiEvesKeret').innerText = ideiMaradek + " nap";
 
-      const hoKeret = Number(currentUserProfile.ho_keret) || 4;
-      const hoMaradek = hoKeret - stats.hoKivett;
+    const hoKeret = Number(currentUserProfile.ho_keret) || 4;
+    const hoMaradek = hoKeret - stats.hoKivett;
 
-      if (document.getElementById('uiAktualisHonapNeve')) {
-        document.getElementById('uiAktualisHonapNeve').innerText = `${now.getFullYear()}. ${HUNGARIAN_MONTHS[now.getMonth()]}`;
-      }
-      if (document.getElementById('uiHoKeret')) document.getElementById('uiHoKeret').innerText = hoKeret;
-      if (document.getElementById('uiHoKivett')) document.getElementById('uiHoKivett').innerText = stats.hoKivett;
-      
-      const hoMaradekEl = document.getElementById('uiHoMaradek');
-      if (hoMaradekEl) {
-        hoMaradekEl.innerText = hoMaradek + " nap";
-      }
-
-      // 🎯 3. TÚLMUNKA / CSÚSZTATHATÓ EGYENLEG KISZÁMÍTÁSA
-      const myKeret = Number(currentUserProfile.munkaido_keret ?? currentUserProfile.napi_munkaido ?? currentUserProfile.orakeret ?? currentUserProfile.dailyWorkLimit) || 8;
-      const myInitial = Number(currentUserProfile.csusztathato_kezdo) || 0;
-
-      const otStats = calculateUserOvertimeBalances(
-        currentUserProfile.email,
-        userWorkLogs,
-        userRequestsCache,
-        userDecisions,
-        myInitial,
-        myKeret
-      );
-
-      console.log("[Saját Pult] Kiszámolt csúsztatható egyenleg:", otStats.osszesCsusztathato);
-
-      // 🎯 4. A CSÚSZTATHATÓ KÁRTYA FRISSÍTÉSE A FELÜLETEN (Minden lehetséges elem azonosítót frissítünk)
-      const targetValue = `${otStats.osszesCsusztathato} óra`;
-      const possibleElements = [
-        document.getElementById('uiCsusztathato'),
-        document.getElementById('uiCsusztathatoOra'),
-        document.getElementById('uiCsusztathatoKeret'),
-        document.getElementById('myCsusztathatoVal'),
-        document.getElementById('csusztathatoBadge'),
-        document.querySelector('.csusztathato-val')
-      ];
-
-      possibleElements.forEach(el => {
-        if (el) el.innerText = targetValue;
-      });
-
-      // 5. TÁBLÁZAT ÉS NAPTÁR KIRAJZOLÁSA
-      renderMyRequestsTable(userRequestsCache);
-      renderCalendar();
-
-    } catch (e) {
-      console.error("Hiba a saját adatok betöltésekor:", e);
+    if (document.getElementById('uiAktualisHonapNeve')) {
+      document.getElementById('uiAktualisHonapNeve').innerText = `${now.getFullYear()}. ${HUNGARIAN_MONTHS[now.getMonth()]}`;
     }
+    if (document.getElementById('uiHoKeret')) document.getElementById('uiHoKeret').innerText = hoKeret;
+    if (document.getElementById('uiHoKivett')) document.getElementById('uiHoKivett').innerText = stats.hoKivett;
+    
+    const hoMaradekEl = document.getElementById('uiHoMaradek');
+    if (hoMaradekEl) {
+      hoMaradekEl.innerText = hoMaradek + " nap";
+    }
+
+    // 🎯 3. TÚLMUNKA / CSÚSZTATHATÓ EGYENLEG KISZÁMÍTÁSA
+    const myKeret = Number(currentUserProfile.munkaido_keret ?? currentUserProfile.napi_munkaido ?? currentUserProfile.orakeret ?? currentUserProfile.dailyWorkLimit) || 8;
+    const myInitial = Number(currentUserProfile.csusztathato_kezdo) || 0;
+
+    const otStats = calculateUserOvertimeBalances(
+      currentUserProfile.email,
+      userWorkLogs,
+      userRequestsCache,
+      userDecisions,
+      myInitial,
+      myKeret
+    );
+
+    console.log("[Saját Pult] Kiszámolt csúsztatható egyenleg:", otStats.osszesCsusztathato);
+
+    // 🎯 4. A CSÚSZTATHATÓ KÁRTYA FRISSÍTÉSE A FELÜLETEN (Minden lehetséges elem azonosítót frissítünk)
+    const targetValue = `${otStats.osszesCsusztathato} óra`;
+    const possibleElements = [
+      document.getElementById('uiCsusztathato'),
+      document.getElementById('uiCsusztathatoOra'),
+      document.getElementById('uiCsusztathatoKeret'),
+      document.getElementById('myCsusztathatoVal'),
+      document.getElementById('csusztathatoBadge'),
+      document.querySelector('.csusztathato-val')
+    ];
+
+    possibleElements.forEach(el => {
+      if (el) el.innerText = targetValue;
+    });
+
+    // 5. TÁBLÁZAT ÉS NAPTÁR KIRAJZOLÁSA
+    renderMyRequestsTable(userRequestsCache);
+    renderCalendar();
+
+  } catch (e) {
+    console.error("Hiba a saját adatok betöltésekor:", e);
+  }
 }
 
   function renderMyRequestsTable(requests) {
