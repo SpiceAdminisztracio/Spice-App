@@ -2627,6 +2627,8 @@ async function getClientYearlyReportFromSupabase(clientName) {
     return s;
   };
 
+  // 🎯 JAVÍTOTT TÁVOLLÉT SZŰRŐ: A \bho\b reguláris kifejezéssel kizárólag az önálló "HO" szót szűri,
+  // így a szavak belsejében lévő "ho" betűpárra (pl. Phoenix, Showroom, Shopify) nem riaszt tévesen!
   const isAbsenceLog = (l) => {
     const txt = typeof normalizeStr === 'function'
       ? normalizeStr(`${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`)
@@ -2638,7 +2640,8 @@ async function getClientYearlyReportFromSupabase(clientName) {
            txt.includes('beteg') || 
            txt.includes('tappenz') || 
            txt.includes('home office') || 
-           txt.includes('ho');
+           txt.includes('otthoni') ||
+           /\bho\b/i.test(txt);
   };
 
   const getLeaveHours = (leave, limit) => {
@@ -3142,7 +3145,6 @@ async function checkMissingRecords(evt) {
           profiles = allProfiles.filter(p => {
             const pEmail = cleanEmail(p.email);
             
-            // Saját magát kiszűri
             if (pEmail === myEmail) return false;
 
             const empRoleRaw = typeof normalizeStr === 'function' ? normalizeStr(p.jogosultsag || p.role || p.pozicio || '') : String(p.jogosultsag || p.role || '').toLowerCase();
@@ -3157,27 +3159,19 @@ async function checkMissingRecords(evt) {
 
             const isEmpAnyLeaderOrMeta = isEmpBoss || isEmpManager || isEmpLeader || isEmpCsv || isEmpVezetoseg;
 
-            // 🎯 1. KÖZVETLEN FELETTESI LÁNC ELLENŐRZÉSE
             const isDirectSub = Boolean(myEmail) && (
               (p.manager_email && cleanEmail(p.manager_email).includes(myEmail)) ||
               (p.leader_email && cleanEmail(p.leader_email).includes(myEmail)) ||
               (p.csoportvezeto_email && cleanEmail(p.csoportvezeto_email).includes(myEmail))
             );
 
-            // 🎯 2. VEZETŐK ÉS VEZETŐSÉG TAGJAINAK SZIGORÍTÁSA
-            // Ha a vizsgált ember bármilyen vezető vagy a "Vezetőség" csoporthoz tartozik,
-            // KIZÁRÓLAG akkor láthatja a felettes, ha közvetlenül ő van beállítva a főnökének (isDirectSub).
             if (isEmpAnyLeaderOrMeta) {
               return isDirectSub;
             }
 
-            // 🎯 3. CSOPORTVEZETŐ (CSV) SZABÁLY: Csak sima USER-eket láthat!
             if (isCsv && isEmpAnyLeaderOrMeta) return false;
-
-            // 🎯 4. LEADER SZABÁLY: Csak USER-eket és CSOPORTVEZETŐKET láthat!
             if (isLeader && (isEmpBoss || isEmpManager || isEmpLeader)) return false;
 
-            // 🎯 5. MANAGER SZABÁLY: Ha van a csoportban Lead/CSV, csak őket látja (és a direkt beosztottjait).
             if (isManager) {
               if (isEmpBoss || isEmpManager) return false;
 
@@ -3192,7 +3186,6 @@ async function checkMissingRecords(evt) {
 
             if (isDirectSub) return true;
 
-            // 🎯 6. OPERATÍV CSOPORT ÁTFEDÉS ELLENŐRZÉSE (Beosztottak esetén)
             const empOpGroups = new Set();
             const addEmpOpGroup = (rawGroup) => {
               if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
@@ -3274,11 +3267,20 @@ async function checkMissingRecords(evt) {
         }
       });
 
+      // 🎯 JAVÍTOTT ABSENCE LOG SZŰRŐ
       const isAbsenceLog = (l) => {
         const txt = typeof normalizeStr === 'function'
           ? normalizeStr(`${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`)
           : `${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`.toLowerCase();
-        return txt.includes('tavollet') || txt.includes('szabadsag') || txt.includes('beteg');
+
+        return txt.includes('tavollet') || 
+               txt.includes('szabadsag') || 
+               txt.includes('szabi') || 
+               txt.includes('beteg') || 
+               txt.includes('tappenz') || 
+               txt.includes('home office') || 
+               txt.includes('otthoni') ||
+               /\bho\b/i.test(txt);
       };
 
       allLogs.forEach(l => {
@@ -3485,9 +3487,20 @@ async function checkMissingRecords(evt) {
         return isApproved && !isHO;
       });
 
+      // 🎯 EGYSÉGESÍTETT, GOLYÓÁLLÓ TÁVOLLÉT SZŰRŐ
       const isAbsenceLog = (l) => {
-        const txt = normalizeStr((l.munkaszam || '') + ' ' + (l.vevo || '') + ' ' + (l.munka || ''));
-        return txt.includes('tavollet') || txt.includes('szabadsag') || txt.includes('betegseg');
+        const txt = typeof normalizeStr === 'function'
+          ? normalizeStr(`${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`)
+          : `${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`.toLowerCase();
+
+        return txt.includes('tavollet') || 
+               txt.includes('szabadsag') || 
+               txt.includes('szabi') || 
+               txt.includes('beteg') || 
+               txt.includes('tappenz') || 
+               txt.includes('home office') || 
+               txt.includes('otthoni') ||
+               /\bho\b/i.test(txt);
       };
 
       const filteredLogs = logs.filter(l => !isAbsenceLog(l));
@@ -3585,7 +3598,7 @@ async function checkMissingRecords(evt) {
     } finally {
       if (btn) btn.disabled = false;
     }
-  }
+}
 
   function hideMyMissing() {
     const div = document.getElementById('myMissingResult');
@@ -5325,11 +5338,20 @@ async function onTsCreGroupChange() {
       return false;
     };
 
+    // 🎯 EGYSÉGESÍTETT, GOLYÓÁLLÓ TÁVOLLÉT SZŰRŐ
     const isAbsenceLog = (l) => {
       const txt = typeof normalizeStr === 'function' 
-        ? normalizeStr((l.munkaszam || '') + ' ' + (l.vevo || '') + ' ' + (l.munka || ''))
-        : String(l.munkaszam || '').toLowerCase();
-      return txt.includes('tavollet') || txt.includes('szabadsag') || txt.includes('betegseg');
+        ? normalizeStr(`${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`)
+        : `${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`.toLowerCase();
+
+      return txt.includes('tavollet') || 
+             txt.includes('szabadsag') || 
+             txt.includes('szabi') || 
+             txt.includes('beteg') || 
+             txt.includes('tappenz') || 
+             txt.includes('home office') || 
+             txt.includes('otthoni') ||
+             /\bho\b/i.test(txt);
     };
 
     const userLogs = userLogsRaw.filter(l => isUserMatch(l) && isLogMonthMatch(l.datum, l.honap) && !isAbsenceLog(l));
