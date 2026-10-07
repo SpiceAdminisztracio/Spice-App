@@ -1405,20 +1405,26 @@
     .replace(/[\u0300-\u036f]/g, "")
     .trim();
 
-  // Óraalapú típusok felismerése (Csúsztatás, Ünnep, Tréning, Ügyfél)
+  // 🎯 1. AZONNALI KILÉPÉS: Ügyfél (Ü) és Home Office (HO) esetén garantáltan 0 óra az eredmény!
+  // Emiatt nem ad át 8 órát a rendszernek, és nem zárja le a napot a rögzítés elől.
+  if (normType.includes('ugyfel') || normType === 'u' || normType.startsWith('u -') || normType.startsWith('u-') || 
+      normType.includes('home') || normType.includes('office') || normType === 'ho') {
+    return 0;
+  }
+
+  // 2. Óraalapú típusok felismerése (Csúsztatás, Ünnep, Tréning)
   const isHourly = normType.includes('csusztat') || normType === 'cs' || 
-                   normType.includes('unnep') || normType === 'u' || 
-                   normType.includes('trening') || normType.includes('tr') || 
-                   normType.includes('ugyfel');
+                   normType.includes('unnep') || 
+                   normType.includes('trening') || normType.includes('tr');
 
   // Ha NEM óraalapú (pl. rendes szabadság, betegszabadság), marad a napi limit (8 óra)
   if (!isHourly) return limit;
 
-  // 1. Közvetlen óraszám mező ellenőrzése
+  // 3. Közvetlen óraszám mező ellenőrzése
   const directOraszam = Number(leave.oraszam || leave.horas || leave.ora || leave.hours || 0);
   if (directOraszam > 0) return directOraszam;
 
-  // 2. Kezdő és vég időpontok közötti időkülönbség kiszámítása (pl. 08:00 - 10:00)
+  // 4. Kezdő és vég időpontok közötti időkülönbség kiszámítása (pl. 08:00 - 10:00)
   const startStr = String(leave.kezdo_ido || leave.start_time || leave.kezdeti_ido || leave.kezdet || '').trim();
   const endStr = String(leave.veg_ido || leave.end_time || leave.vegso_ido || leave.vege || '').trim();
 
@@ -1429,7 +1435,7 @@
     if (diffMins > 0) return diffMins / 60;
   }
 
-  // 3. Intervallum szöveg kiolvasása (pl. "08:00 - 10:00")
+  // 5. Intervallum szöveg kiolvasása (pl. "08:00 - 10:00")
   const intervalStr = String(leave.ido || leave.időtartam || leave.ido_intervallum || leave.intervallum || '').trim();
   if (intervalStr.includes('-')) {
     const parts = intervalStr.split('-').map(s => s.trim());
@@ -1485,14 +1491,12 @@
             .eq('datum', normalizedDv)
         ]);
 
-        // A) Túlmunka kifizetési döntések ellenőrzése az overtime_decisions táblában
         if (payoutRes.data && payoutRes.data.length > 0) {
           const matchingPayouts = payoutRes.data.filter(p => {
             const pDate = String(p.datum || p.date || p.month || '').substring(0, 10);
             const st = String(p.status || p.decision || '').toLowerCase().trim();
             const isRejected = ['rejected', 'elutasitva', 'cancelled', 'visszavont'].includes(st);
 
-            // Dátum egyezés vizsgálata (konkrét nap YYYY-MM-DD vagy hónap YYYY-MM)
             const dateMatches = pDate === normalizedDv || normalizedDv.startsWith(pDate);
             return dateMatches && !isRejected;
           });
@@ -1502,14 +1506,12 @@
           }
         }
 
-        // B) Nyitási kérelem státuszának ellenőrzése a requests táblában
         if (reqsRes.data && reqsRes.data.length > 0) {
           const pendingStatuses = ['pending_level1', 'pending_admin', 'pending', 'függőben'];
           isPending = reqsRes.data.some(r => pendingStatuses.includes(String(r.status || '').toLowerCase().trim()));
         }
       } catch(err) { console.error("Zárolás ellenőrzési hiba:", err); }
 
-      // Segédfüggvény az űrlap elemek letiltásához / engedélyezéséhez
       const toggleFormState = (enable) => {
         const pointerVal = enable ? 'auto' : 'none';
         const opacityVal = enable ? '1' : '0.4';
@@ -1566,13 +1568,16 @@
 
       const dailyLimit = Number(currentUserProfile?.munkaido_keret || currentUserProfile?.napi_limit) || 8;
 
+      // 🎯 SZŰRÉS: Home Office ÉS Ügyfél (Ü) TÁVOLLÉTEK KIZÁRÁSA
       const activeLeaves = (leaveRes.data || []).filter(req => {
         const st = String(req.status || req.statusz || req.allapot || '').toLowerCase().trim();
         const isApproved = ['approved', 'elfogadva', 'jóváhagyva', 'jóváhagyott'].some(a => st.includes(a));
         if (!isApproved) return false;
 
         const rawType = String(req.tipus || req.jelleg || req.tavollet_tipusa || '').toLowerCase().trim();
-        if (rawType.includes('home') || rawType.includes('office') || rawType === 'ho' || rawType.includes('otthoni')) return false;
+        const isExcluded = rawType.includes('home') || rawType.includes('office') || rawType === 'ho' || rawType.includes('otthoni') ||
+                           rawType.includes('ügyfél') || rawType.includes('ugyfel') || rawType === 'ü' || rawType.startsWith('ü -') || rawType.startsWith('u -');
+        if (isExcluded) return false;
 
         const rawStart = req.kezdo_datum || req.datum || req.start_date;
         const rawEnd = req.veg_datum || req.kezdo_datum || req.datum || req.end_date;
@@ -1583,14 +1588,24 @@
         return normalizedDv >= start && normalizedDv <= end;
       });
 
+      // 🎯 EGYSÉGESÍTETT TÁVOLLÉT SZŰRŐ (GOLYÓÁLLÓ \bho\b ILLESZKEDÉSSEL)
       const isAbsenceLog = (l) => {
-        const txt = normalizeStr((l.munkaszam || '') + ' ' + (l.vevo || '') + ' ' + (l.munka || ''));
-        return txt.includes('tavollet') || txt.includes('szabadsag') || txt.includes('betegseg');
+        const txt = typeof normalizeStr === 'function'
+          ? normalizeStr(`${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`)
+          : `${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`.toLowerCase();
+
+        return txt.includes('tavollet') || 
+               txt.includes('szabadsag') || 
+               txt.includes('szabi') || 
+               txt.includes('beteg') || 
+               txt.includes('tappenz') || 
+               txt.includes('home office') || 
+               txt.includes('otthoni') ||
+               /\bho\b/i.test(txt);
       };
 
       const filteredLogs = (logsRes.data || []).filter(l => !isAbsenceLog(l));
 
-      // 🎯 PONTOS CSOPORTOSÍTÁS: Az éjszakai és hétvégi jelölőket is beemeljük az összevonási kulcsba
       const groupedMap = {};
       filteredLogs.forEach(item => {
         const isNight = item.ejszakai_esemeny === true || String(item.ejszakai_esemeny).toLowerCase() === 'true';
@@ -1609,13 +1624,11 @@
       const logs = Object.values(groupedMap);
       let dailyTotal = logs.reduce((sum, item) => sum + item.oraszam, 0);
 
-      // 🎯 4. SZERKESZTÉSI JOG: Csak akkor szerkeszthető, ha megengedett az időablak ÉS NINCS kifizetési zárolás
       const canEdit = isAllowed && !isPayoutLocked;
 
       let htmlItems = logs.map(i => {
         const allIds = [i.id, ...i.extraIds].join(',');
 
-        // Különleges esemény jelvények megjelenítése
         let typeBadge = '';
         if (i.isNight) {
           typeBadge += `<span class="badge bg-dark text-warning border border-warning ms-1" style="font-size: 0.7rem;"><i class="bi bi-moon-stars me-1"></i>Éjszakai</span>`;
@@ -1668,12 +1681,12 @@
           .replace(/[\u0300-\u036f]/g, "")
           .trim();
 
+        // 🎯 PONTOS ÓRASSZÁM KISZÁMÍTÁSA A CENTRALIZÁLT FÜGGVÉNNYEL
         const hours = parseLeaveHours(leave, dailyLimit);
 
         const isHourly = normType.includes('csusztat') || normType === 'cs' || 
-                         normType.includes('unnep') || normType === 'u' || 
-                         normType.includes('trening') || normType.includes('tr') || 
-                         normType.includes('ugyfel');
+                         normType.includes('unnep') || 
+                         normType.includes('trening') || normType.includes('tr');
 
         let label = isHourly ? (leave.tipus || 'Óraalapú távollét') : "Távollét (szabadság, betegség)";
 
@@ -2627,8 +2640,7 @@ async function getClientYearlyReportFromSupabase(clientName) {
     return s;
   };
 
-  // 🎯 JAVÍTOTT TÁVOLLÉT SZŰRŐ: A \bho\b reguláris kifejezéssel kizárólag az önálló "HO" szót szűri,
-  // így a szavak belsejében lévő "ho" betűpárra (pl. Phoenix, Showroom, Shopify) nem riaszt tévesen!
+  // 🎯 JAVÍTOTT TÁVOLLÉT SZŰRŐ: A \bho\b reguláris kifejezéssel kizárólag az önálló "HO" szót szűri
   const isAbsenceLog = (l) => {
     const txt = typeof normalizeStr === 'function'
       ? normalizeStr(`${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`)
@@ -2644,151 +2656,30 @@ async function getClientYearlyReportFromSupabase(clientName) {
            /\bho\b/i.test(txt);
   };
 
-  const getLeaveHours = (leave, limit) => {
-    const rawType = String(leave.tipus || leave.jelleg || leave.tavollet_tipusa || leave.request_type || '').toLowerCase().trim();
-    const isHourly = rawType.includes('csúsztat') || rawType.includes('csusztat') || rawType === 'cs' || 
-                     rawType.includes('ünnep') || rawType === 'ü' || rawType.includes('tr');
-    
-    if (!isHourly) return Number(limit) || 8;
-
-    const directOraszam = Number(leave.oraszam || leave.horas || 0);
-    if (directOraszam > 0) return directOraszam;
-
-    const startStr = String(leave.kezdo_ido || leave.start_time || leave.kezdeti_ido || '').trim();
-    const endStr = String(leave.veg_ido || leave.end_time || leave.vegso_ido || '').trim();
-    if (startStr && endStr && startStr.includes(':') && endStr.includes(':')) {
-      const [h1, m1] = startStr.split(':').map(n => parseInt(n, 10) || 0);
-      const [h2, m2] = endStr.split(':').map(n => parseInt(n, 10) || 0);
-      const diffMins = (h2 * 60 + m2) - (h1 * 60 + m1);
-      if (diffMins > 0) return diffMins / 60;
-    }
-
-    const intervalStr = String(leave.ido || leave.időtartam || leave.ido_intervallum || '').trim();
-    if (intervalStr.includes('-')) {
-      const parts = intervalStr.split('-').map(s => s.trim());
-      if (parts.length === 2 && parts[0].includes(':') && parts[1].includes(':')) {
-        const [h1, m1] = parts[0].split(':').map(n => parseInt(n, 10) || 0);
-        const [h2, m2] = parts[1].split(':').map(n => parseInt(n, 10) || 0);
-        const diffMins = (h2 * 60 + m2) - (h1 * 60 + m1);
-        if (diffMins > 0) return diffMins / 60;
-      }
-    }
-
-    return 0;
-  };
-
   try {
     const { data: allProfilesRaw, error: profErr } = await supabaseClient.from('profiles').select('*');
     if (profErr) throw profErr;
 
-    // 🎯 A SZÜLÉSI ÉS TARTÓS BETEGSZABADSÁGON LÉVŐKET IS BEENGEDJÜK A LEKÉRDEZÉSBE A KISZÜRKÍTÉSHEZ
     const allProfiles = (allProfilesRaw || []).filter(p => {
       const st = String(p.statusz || 'aktív').toLowerCase().trim();
       return st === 'aktív' || st === 'aktiv' || st.includes('szülé') || st.includes('szules') || st.includes('tartós') || st.includes('tartos');
     });
 
     const prof = window.currentUserProfile || currentUserProfile || {};
-    const myEmail = cleanEmail(prof.email);
-
-    // 🎯 SZIGORÚ HIERARCHIKUS SZEREPKÖRÖK MEGHATÁROZÁSA
-    const rawRole = typeof normalizeStr === 'function' ? normalizeStr(prof.jogosultsag || prof.role || prof.pozicio || '') : String(prof.jogosultsag || prof.role || '').toLowerCase();
-    
-    const isAdmin = rawRole.includes('admin') || rawRole.includes('boss');
-    const isManager = (rawRole.includes('manag') || rawRole.includes('mgr')) && !isAdmin;
-    const isLeader = (rawRole.includes('lead') || rawRole.includes('head') || rawRole.includes('vezeto')) && !isManager && !isAdmin;
-    const isCsv = (rawRole.includes('csoportvez') || rawRole.includes('csv')) && !isLeader && !isManager && !isAdmin;
-
-    // Felügyelt operatív csoportok (kizárólag a saját profilból feltöltve, META csoportok nélkül)
-    const myOpGroups = new Set();
-    const cleanStr = (s) => (typeof normalizeStr === 'function' ? normalizeStr(s) : String(s).toLowerCase()).replace(/\bcsapat\b/g, '').replace(/[\s\-_]+/g, '').trim();
-    const META_GROUPS = ['vezetoseg', 'leader', 'vezeto', 'manager', 'boss', 'egyeb', 'admin', 'menedzsment'];
-
-    const addOpGroup = (rawGroup) => {
-      if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
-      String(rawGroup).split(',').forEach(g => {
-        const c = cleanStr(g);
-        if (c && !META_GROUPS.includes(c)) myOpGroups.add(c);
-      });
-    };
-
-    addOpGroup(prof.latott_csoportok);
-    addOpGroup(prof.csoport);
-
     let profiles = [];
-    if (isAdmin) {
-      profiles = allProfiles;
+
+    if (typeof getSupervisedProfilesForUser === 'function') {
+      profiles = getSupervisedProfilesForUser(allProfiles, prof, true);
     } else {
-      profiles = allProfiles.filter(p => {
-        const pEmail = cleanEmail(p.email);
-        
-        // Saját magát mindig látja a táblázatban
-        if (pEmail === myEmail) return true;
-
-        const empRoleRaw = typeof normalizeStr === 'function' ? normalizeStr(p.jogosultsag || p.role || p.pozicio || '') : String(p.jogosultsag || p.role || '').toLowerCase();
-        const empGroupClean = cleanStr(p.csoport || '');
-        const empDispGroupClean = cleanStr(p.display_csoport || '');
-
-        const isEmpBoss = empRoleRaw.includes('boss') || empRoleRaw.includes('admin') || empRoleRaw.includes('igazgato');
-        const isEmpManager = empRoleRaw.includes('manag') || empRoleRaw.includes('mgr');
-        const isEmpLeader = empRoleRaw.includes('lead') || empRoleRaw.includes('head') || empRoleRaw.includes('vezeto');
-        const isEmpCsv = empRoleRaw.includes('csoportvez') || empRoleRaw.includes('csv');
-        const isEmpVezetoseg = META_GROUPS.includes(empGroupClean) || META_GROUPS.includes(empDispGroupClean);
-
-        const isEmpAnyLeaderOrMeta = isEmpBoss || isEmpManager || isEmpLeader || isEmpCsv || isEmpVezetoseg;
-
-        // 🎯 1. KÖZVETLEN FELETTESI LÁNC ELLENŐRZÉSE
-        const isDirectSub = Boolean(myEmail) && (
-          (p.manager_email && cleanEmail(p.manager_email).includes(myEmail)) ||
-          (p.leader_email && cleanEmail(p.leader_email).includes(myEmail)) ||
-          (p.csoportvezeto_email && cleanEmail(p.csoportvezeto_email).includes(myEmail))
-        );
-
-        // 🎯 2. VEZETŐK ÉS VEZETŐSÉG TAGJAINAK SZIGORÍTÁSA
-        // Ha a vizsgált személy bármilyen vezető vagy a "Vezetőség" csoporthoz tartozik,
-        // KIZÁRÓLAG akkor láthatja a felettes, ha közvetlenül ő van beállítva a főnökének (isDirectSub).
-        if (isEmpAnyLeaderOrMeta) {
-          if (!isDirectSub && !isAdmin) return false;
-        }
-
-        // 🎯 3. CSOPORTVEZETŐ (CSV) SZABÁLY: Csak sima USER-eket láthat!
-        if (isCsv && isEmpAnyLeaderOrMeta) return false;
-
-        // 🎯 4. LEADER SZABÁLY: Csak USER-eket és CSOPORTVEZETŐKET láthat!
-        if (isLeader && (isEmpBoss || isEmpManager || isEmpLeader)) return false;
-
-        // 🎯 5. MANAGER SZABÁLY: Ha van a csoportban Lead/CSV, csak őket látja (és a direkt beosztottjait).
-        if (isManager) {
-          if (isEmpBoss || isEmpManager) return false;
-
-          const hasSubLeaderInGroup = (allProfiles || []).some(subP => {
-            if (cleanStr(subP.csoport || '') !== empGroupClean) return false;
-            const r = typeof normalizeStr === 'function' ? normalizeStr(subP.jogosultsag || subP.role || subP.pozicio || '') : String(subP.jogosultsag || subP.role || '').toLowerCase();
-            return r.includes('lead') || r.includes('head') || r.includes('csoportvez') || r.includes('csv');
-          });
-
-          if (hasSubLeaderInGroup && !isEmpLeader && !isEmpCsv && !isDirectSub) return false;
-        }
-
-        if (isDirectSub) return true;
-
-        // 🎯 6. OPERATÍV CSOPORT ÁTFEDÉS ELLENŐRZÉSE (Beosztottak esetén)
-        const empOpGroups = new Set();
-        const addEmpOpGroup = (rawGroup) => {
-          if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
-          String(rawGroup).split(',').forEach(g => {
-            const c = cleanStr(g);
-            if (c && !META_GROUPS.includes(c)) empOpGroups.add(c);
-          });
-        };
-        addEmpOpGroup(p.latott_csoportok);
-        addEmpOpGroup(p.csoport);
-
-        for (const g of empOpGroups) {
-          if (myOpGroups.has(g)) return true;
-        }
-
-        return false;
-      });
+      const myEmail = cleanEmail(prof.email);
+      const rawRole = typeof normalizeStr === 'function' ? normalizeStr(prof.jogosultsag || prof.role || prof.pozicio || '') : String(prof.jogosultsag || prof.role || '').toLowerCase();
+      const isAdmin = rawRole.includes('admin') || rawRole.includes('boss');
+      
+      if (isAdmin) {
+        profiles = allProfiles;
+      } else {
+        profiles = allProfiles.filter(p => cleanEmail(p.email) === myEmail);
+      }
     }
 
     if (!profiles || profiles.length === 0) {
@@ -2805,7 +2696,6 @@ async function getClientYearlyReportFromSupabase(clientName) {
     
     const cleanShiftedWorkdays = (typeof shiftedWorkdays !== 'undefined' && Array.isArray(shiftedWorkdays) ? shiftedWorkdays : ['2026-08-08']).map(s => toStandardYYYYMMDD(s));
 
-    // WORK_LOGS ÉS LEAVE_REQUESTS LEKÉRDEZÉSE (TÖLTÉS PAGINÁLVA)
     let allLogs = [], logFrom = 0, step = 1000;
     while (true) {
       const { data: chunk, error } = await supabaseClient
@@ -2836,12 +2726,16 @@ async function getClientYearlyReportFromSupabase(clientName) {
       leaveFrom += step;
     }
 
+    // 🎯 ITT KISZŰRJÜK A HOME OFFICE (HO) ÉS AZ ÜGYFÉL (Ü) JELÖLÉSEKET IS
     const approvedLeaves = allLeaves.filter(req => {
       const st = String(req.status || req.statusz || req.allapot || '').toLowerCase().trim();
       const isAppr = st.includes('approved') || st.includes('elfogad') || st.includes('jovahagy') || st.includes('jóváhagy');
       const rawType = String(req.tipus || req.jelleg || req.tavollet_tipusa || req.request_type || '').toLowerCase().trim();
-      const isHO = rawType.includes('home') || rawType.includes('office') || rawType === 'ho' || rawType.includes('otthoni');
-      return isAppr && !isHO;
+      
+      const isExcluded = rawType.includes('home') || rawType.includes('office') || rawType === 'ho' || rawType.includes('otthoni') ||
+                         rawType.includes('ügyfél') || rawType.includes('ugyfel') || rawType === 'ü' || rawType.startsWith('ü -') || rawType.startsWith('u -');
+
+      return isAppr && !isExcluded;
     });
 
     const profileLookup = {};
@@ -2907,13 +2801,11 @@ async function getClientYearlyReportFromSupabase(clientName) {
       for (let d = 1; d <= lastDay; d++) {
         const targetDateStr = `${m}-${String(d).padStart(2, '0')}`;
         
-        // Ki- és belépési dátum ellenőrzése
         if ((belepStr && targetDateStr < belepStr) || (kilepStr && targetDateStr > kilepStr)) {
           days.push({ t: 0, d: 0, overtime: 0, disabled: true });
           continue;
         }
 
-        // 🎯 TARTÓS TÁVOLLÉT (SZÜLÉSI / TARTÓS BETEGSZABADSÁG) KISZÜRKÍTÉSE
         let isPassiveDay = false;
         if (isPassiveRole) {
           if (statuszKezdet && targetDateStr < statuszKezdet) {
@@ -2941,8 +2833,10 @@ async function getClientYearlyReportFromSupabase(clientName) {
         });
 
         let dayTotal = dayWorkTotal;
+
+        // 🎯 A GLOBÁLIS CENTRALIZÁLT parseLeaveHours FÜGGVÉNY MEGHÍVÁSA
         if (dayLeave) {
-          dayTotal += getLeaveHours(dayLeave, dailyLimit);
+          dayTotal += typeof parseLeaveHours === 'function' ? parseLeaveHours(dayLeave, dailyLimit) : 0;
         }
 
         const dt = new Date(yr, mo, d, 12, 0, 0);
@@ -3013,7 +2907,6 @@ async function getClientYearlyReportFromSupabase(clientName) {
       const isPassiveUser = stNorm.includes('szülé') || stNorm.includes('szules') || stNorm.includes('tartós') || stNorm.includes('tartos');
       const isLeaderRow = ['admin', 'manager', 'leader', 'csoportvezeto', 'csoportvezető'].includes(w.role);
       
-      // Passzív felhasználó sora átlátszóbb/kiszürkített stílust kap
       const rowClass = isPassiveUser ? 'table-light opacity-75 text-muted' : (isLeaderRow ? 'table-info' : '');
       const badgeIcon = isPassiveUser ? '<span class="badge bg-secondary ms-1" style="font-size:0.6rem;">INAKTÍV</span>' : '';
 
@@ -3034,7 +2927,6 @@ async function getClientYearlyReportFromSupabase(clientName) {
         let cellContent = "";
         
         if (day.passive) {
-          // Passzív szülési / tartós betegszabadság cella kiszürkítése
           cellClass = "bg-secondary-subtle text-muted";
           cellContent = `<span style="font-size: 0.6rem;" class="fw-bold text-secondary">SZÜL/TB</span>`;
         } else if (day.disabled) {
@@ -3241,12 +3133,16 @@ async function checkMissingRecords(evt) {
         leaveFrom += step;
       }
 
+      // 🎯 ITT SZŰRJÜK KI AZ ÜGYFÉL (Ü) ÉS HOME OFFICE (HO) JELÖLÉSEKET
       const approvedLeaves = allLeaves.filter(req => {
         const st = String(req.status || req.statusz || req.allapot || '').toLowerCase().trim();
         const isApproved = ['approved', 'elfogadva', 'jóváhagyva', 'jóváhagyott'].some(a => st.includes(a));
         const rawType = String(req.tipus || req.jelleg || req.tavollet_tipusa || req.request_type || '').toLowerCase().trim();
-        const isHO = rawType.includes('home') || rawType.includes('office') || rawType === 'ho' || rawType.includes('otthoni');
-        return isApproved && !isHO;
+        
+        const isExcluded = rawType.includes('home') || rawType.includes('office') || rawType === 'ho' || rawType.includes('otthoni') ||
+                           rawType.includes('ügyfél') || rawType.includes('ugyfel') || rawType === 'ü' || rawType.startsWith('ü -') || rawType.startsWith('u -');
+
+        return isApproved && !isExcluded;
       });
 
       const profileLookup = {};
@@ -3356,14 +3252,9 @@ async function checkMissingRecords(evt) {
               return dateStr >= start && dateStr <= end;
             });
 
+            // 🎯 ITT TÖRTÉNIK A VARÁZSLAT: A GLOBÁLIS parseLeaveHours FÜGGVÉNY HASZNÁLATA
             dayLeaves.forEach(leave => {
-              const rawType = String(leave.tipus || leave.jelleg || leave.tavollet_tipusa || leave.request_type || '').toLowerCase().trim();
-              if (rawType.includes('csúsztat') || rawType.includes('csusztat') || rawType === 'cs' || 
-                  rawType.includes('ünnep') || rawType === 'ü' || rawType.includes('tr')) {
-                dayTotal += (Number(leave.oraszam) || 0);
-              } else {
-                dayTotal += limit;
-              }
+              dayTotal += typeof parseLeaveHours === 'function' ? parseLeaveHours(leave, limit) : 0;
             });
 
             if (dayTotal < alertThreshold) {
@@ -3479,15 +3370,18 @@ async function checkMissingRecords(evt) {
         }
       });
 
+      // 🎯 ITT SZŰRJÜK KI AZ ÜGYFÉL (Ü) ÉS HOME OFFICE (HO) JELÖLÉSEKET
       const approvedLeaves = (leaveRes.data || []).filter(req => {
         const st = String(req.status || req.statusz || '').toLowerCase().trim();
         const isApproved = ['approved', 'elfogadva', 'jóváhagyva', 'jóváhagyott'].some(a => st.includes(a));
         const rawType = String(req.tipus || req.jelleg || req.tavollet_tipusa || '').toLowerCase().trim();
-        const isHO = rawType.includes('home') || rawType.includes('office') || rawType === 'ho' || rawType.includes('otthoni');
-        return isApproved && !isHO;
+        
+        const isExcluded = rawType.includes('home') || rawType.includes('office') || rawType === 'ho' || rawType.includes('otthoni') ||
+                           rawType.includes('ügyfél') || rawType.includes('ugyfel') || rawType === 'ü' || rawType.startsWith('ü -') || rawType.startsWith('u -');
+
+        return isApproved && !isExcluded;
       });
 
-      // 🎯 EGYSÉGESÍTETT, GOLYÓÁLLÓ TÁVOLLÉT SZŰRŐ
       const isAbsenceLog = (l) => {
         const txt = typeof normalizeStr === 'function'
           ? normalizeStr(`${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`)
@@ -3537,14 +3431,9 @@ async function checkMissingRecords(evt) {
             return dateStr >= start && dateStr <= end;
           });
 
+          // 🎯 ITT TÖRTÉNIK A VARÁZSLAT: A GLOBÁLIS parseLeaveHours FÜGGVÉNY HASZNÁLATA
           dayLeaves.forEach(leave => {
-            const rawType = String(leave.tipus || leave.jelleg || leave.tavollet_tipusa || '').toLowerCase();
-            if (rawType.includes('csúsztat') || rawType.includes('csusztat') || rawType === 'cs' || 
-                rawType.includes('ünnep') || rawType === 'ü' || rawType.includes('tr')) {
-              dayTotal += (Number(leave.oraszam) || 0);
-            } else {
-              dayTotal += limit;
-            }
+            dayTotal += typeof parseLeaveHours === 'function' ? parseLeaveHours(leave, limit) : 0;
           });
 
           if (dayTotal < alertThreshold) {
@@ -5361,6 +5250,7 @@ async function onTsCreGroupChange() {
     const startDateStr = `${month}-01`;
     const endDateStr = `${month}-${String(lastDay).padStart(2, '0')}`;
 
+    // 🎯 HOME OFFICE ÉS ÜGYFÉL (Ü) JELÖLÉSEK KISZÜRÉSE
     const userLeaves = userLeavesRaw.filter(req => {
       if (!isUserMatch(req)) return false;
 
@@ -5368,9 +5258,10 @@ async function onTsCreGroupChange() {
       const isApproved = ['approved', 'elfogadva', 'jóváhagyva', 'jóváhagyott'].some(a => st.includes(a));
 
       const rawType = String(req.tipus || req.jelleg || req.tavollet_tipusa || '').toLowerCase().trim();
-      const isHO = rawType.includes('home') || rawType.includes('office') || rawType === 'ho' || rawType.includes('otthoni');
+      const isExcluded = rawType.includes('home') || rawType.includes('office') || rawType === 'ho' || rawType.includes('otthoni') ||
+                         rawType.includes('ügyfél') || rawType.includes('ugyfel') || rawType === 'ü' || rawType.startsWith('ü -') || rawType.startsWith('u -');
 
-      if (!isApproved || isHO) return false;
+      if (!isApproved || isExcluded) return false;
 
       const start = String(req.kezdo_datum || req.datum || req.start_date || '').substring(0, 10).replace(/\./g, '-');
       const end = String(req.veg_datum || req.kezdo_datum || req.datum || req.end_date || '').substring(0, 10).replace(/\./g, '-');
@@ -5501,7 +5392,6 @@ async function onTsCreGroupChange() {
     resContainer.innerHTML = `<div class="alert alert-danger">Hiba az adatok feldolgozásakor: ${err.message}</div>`;
   }
 }
-
 async function loadTsCreativeData() {
   const monthEl = document.getElementById('tsCreMonth');
   const groupEl = document.getElementById('tsCreGroup');
