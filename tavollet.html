@@ -1955,6 +1955,33 @@
   </div>
 </div>
 
+<!-- KREATÍV VÉLEMÉNYEZÉS MODAL -->
+<div class="modal fade" id="creativeOpinionModal" tabindex="-1" aria-hidden="true" style="z-index: 10007;">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content shadow border-0">
+      <div class="modal-header text-white" style="background-color: #6f42c1;">
+        <h5 class="modal-title fw-bold"><i class="bi bi-chat-left-text-fill me-2"></i>Kreatív Szakmai Véleményezés</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Bezárás"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">
+          Kérlek, írd le a szakmai véleményedet a kérelemmel kapcsolatban. Ez bekerül a kérelem megjegyzésébe, és az e-mail értesítővel együtt megkapja a végső felettes is.
+        </p>
+        <div class="mb-2">
+          <label for="creativeOpinionInput" class="form-label small fw-bold">Szakmai vélemény <span class="text-danger">*</span></label>
+          <textarea class="form-control form-control-sm" id="creativeOpinionInput" rows="4" placeholder="Írd ide a véleményed..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer bg-light">
+        <button type="button" class="btn btn-secondary btn-sm fw-bold" data-bs-dismiss="modal">Mégse</button>
+        <button type="button" class="btn text-white btn-sm fw-bold px-3" style="background-color: #6f42c1;" onclick="executeSubmitCreativeOpinion()">
+          <i class="bi bi-send me-1"></i> Vélemény Továbbítása
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- RÖGZÍTETT ALSÓ NAVIGÁCIÓS SÁV (MOBIL APP FEEL) -->
 <nav class="app-bottom-nav">
   <div class="app-nav-item active" id="mbTabDashboard" onclick="switchMobileTab('dashboard', this)">
@@ -2974,12 +3001,12 @@ async function finalizeAndSaveRequest(reqData, btn) {
 
 async function submitCreativeOpinion(requestId, opinionText) {
   // 1. BIZTONSÁGI ELLENŐRZÉS: Tényleg Adél (vagy egy Admin) van bejelentkezve?
-  const adelEmail = 'onofri-varga.adel@spicecommunication.hu'; // Itt add meg a pontos e-mail címét!
   const myEmail = typeof cleanEmail === 'function' 
     ? cleanEmail(currentUserProfile?.email) 
     : String(currentUserProfile?.email || '').toLowerCase().trim();
 
-  const isAdel = myEmail === adelEmail;
+  // 🎯 RUGALMAS E-MAIL ELLENŐRZÉS: Bármilyen formátumban lép be (varga.adel, onofri.varga, stb.) átengedi
+  const isAdel = myEmail.includes('varga.adel') || myEmail.includes('adel');
   const isAdmin = String(currentUserProfile?.jogosultsag || '').toLowerCase().includes('admin');
 
   if (!isAdel && !isAdmin) {
@@ -3172,14 +3199,14 @@ async function submitCreativeOpinion(requestId, opinionText) {
       let query = supabaseClient.from('leave_requests').select('*');
 
       if (isAdmin) {
-        // Admin és Boss mindent lát
-        query = query.or('status.eq.pending_admin,status.eq.pending_level1,status.eq.pending_hr,status.eq."Függőben"');
+        // Admin és Boss mindent lát (beleértve a kreatív véleményezésre várókat is)
+        query = query.or('status.eq.pending_admin,status.eq.pending_level1,status.eq.pending_hr,status.eq.pending_creative_review,status.eq."Függőben"');
       } else if (isHRManager) {
-        // HR Vezető látja a saját csoportjának függő kérelmeit ÉS az ÖSSZES különleges HO (pending_hr) kérelmet
-        query = query.or(`approver_email.eq."${userEmail}",status.eq.pending_hr`);
+        // HR Vezető látja a saját csoportjának függő kérelmeit ÉS az ÖSSZES különleges HO (pending_hr) / kreatív véleményezést
+        query = query.or(`approver_email.eq."${userEmail}",status.eq.pending_hr,status.eq.pending_creative_review`);
       } else {
-        // Hagyományos vezető csak a hozzá rendelt level1-es kérelmeket látja
-        query = query.eq('approver_email', userEmail).eq('status', 'pending_level1');
+        // Hagyományos vezető és Adél: látják a hozzájuk rendelhető level1 ÉS pending_creative_review kérelmeket
+        query = query.eq('approver_email', userEmail).in('status', ['pending_level1', 'pending_creative_review']);
       }
 
       const { data: reqs, error } = await query.order('created_at', { ascending: false });
@@ -3200,23 +3227,60 @@ async function submitCreativeOpinion(requestId, opinionText) {
         if (tbody) {
           tbody.innerHTML = reqs.map(r => {
             const isHRReq = (r.status === 'pending_hr');
-            const hrBadge = isHRReq ? '<span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem;">Különleges HO (HR)</span>' : '';
+            const isCreativeReq = (r.status === 'pending_creative_review');
+
+            let badgeHtml = `<span class="badge bg-secondary">${escapeHtml(r.tipus)}</span>`;
+            if (isHRReq) {
+              badgeHtml += `<span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem;">Különleges HO (HR)</span>`;
+            } else if (isCreativeReq) {
+              badgeHtml += `<span class="badge text-white ms-1" style="font-size:0.65rem; background-color: #6f42c1 !important;">Kreatív véleményezés</span>`;
+            }
+
+            // 🎯 MŰVELETI GOMBOK ELÁGAZÁSA A STÁTUSZ ÉS JOGOSULTSÁG ALAPJÁN
+            let actionButtonsHtml = '';
+            if (isCreativeReq) {
+              if (isAdmin) {
+                // Adminoknak a véleményező gomb MELLETT a közvetlen jóváhagyó/elutasító gombok is megjelennek (Admin felülbírálás)
+                actionButtonsHtml = `
+                  <button class="btn btn-sm fw-bold text-white me-1 shadow-sm" style="background-color: #6f42c1 !important;" onclick="promptCreativeOpinion('${r.id}')" title="Vélemény hozzáadása és továbbítás">
+                    <i class="bi bi-chat-left-text me-1"></i>Véleményezés
+                  </button>
+                  <button class="btn btn-sm btn-success fw-bold me-1 shadow-sm" onclick="actionRequest('${r.id}', 'approve')" title="Közvetlen adminisztrátori jóváhagyás">
+                    <i class="bi bi-check-circle me-1"></i>Elfogad
+                  </button>
+                  <button class="btn btn-sm btn-danger fw-bold shadow-sm" onclick="actionRequest('${r.id}', 'reject')" title="Közvetlen adminisztrátori elutasítás">
+                    <i class="bi bi-x-circle me-1"></i>Elutasít
+                  </button>
+                `;
+              } else {
+                // Nem admin véleményezőknek (Adél) a véleményező gomb jelenik meg
+                actionButtonsHtml = `
+                  <button class="btn btn-sm fw-bold text-white shadow-sm" style="background-color: #6f42c1 !important;" onclick="promptCreativeOpinion('${r.id}')">
+                    <i class="bi bi-chat-left-text me-1"></i>Véleményezés
+                  </button>
+                `;
+              }
+            } else {
+              actionButtonsHtml = `
+                <button class="btn btn-sm btn-success fw-bold me-1 shadow-sm" onclick="actionRequest('${r.id}', 'approve')">
+                  <i class="bi bi-check-circle me-1"></i>Elfogad
+                </button>
+                <button class="btn btn-sm btn-danger fw-bold shadow-sm" onclick="actionRequest('${r.id}', 'reject')">
+                  <i class="bi bi-x-circle me-1"></i>Elutasít
+                </button>
+              `;
+            }
 
             return `
             <tr>
-              <td data-label="Munkatárs"><strong>${escapeHtml(r.nev || r.user_email)}</strong>${hrBadge}</td>
-              <td data-label="Típus"><span class="badge bg-secondary">${escapeHtml(r.tipus)}</span></td>
+              <td data-label="Munkatárs"><strong>${escapeHtml(r.nev || r.user_email)}</strong></td>
+              <td data-label="Típus">${badgeHtml}</td>
               <td data-label="Időtartam"><code>${r.kezdo_datum}</code> &rarr; <code>${r.veg_datum}</code></td>
               <td data-label="Időintervallum">${r.kezdo_ido ? r.kezdo_ido + ' - ' + r.veg_ido : 'Egész napos'}</td>
               <td data-label="Rendkívüli?">${r.rendkivuli ? '<span class="text-danger fw-bold">Igen</span>' : 'Nem'}</td>
               <td data-label="Megjegyzés"><small class="text-muted">${escapeHtml(r.megjegyzes || r.rendkivuli || '-')}</small></td>
               <td data-label="Műveletek" class="text-end px-3">
-                <button class="btn btn-sm btn-success fw-bold me-1" onclick="actionRequest('${r.id}', 'approve')">
-                  <i class="bi bi-check-circle me-1"></i>Elfogad
-                </button>
-                <button class="btn btn-sm btn-danger fw-bold" onclick="actionRequest('${r.id}', 'reject')">
-                  <i class="bi bi-x-circle me-1"></i>Elutasít
-                </button>
+                ${actionButtonsHtml}
               </td>
             </tr>
           `;
@@ -3229,6 +3293,45 @@ async function submitCreativeOpinion(requestId, opinionText) {
     } catch (e) {
       console.error("Hiba a bírálatok lekérdezésekor:", e);
     }
+}
+
+let pendingCreativeRequestId = null;
+
+// 1. Modál megnyitása a gombra kattintáskor
+function promptCreativeOpinion(requestId) {
+  pendingCreativeRequestId = requestId;
+
+  const inputEl = document.getElementById('creativeOpinionInput');
+  if (inputEl) inputEl.value = '';
+
+  const modalEl = document.getElementById('creativeOpinionModal');
+  if (modalEl) {
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+  }
+}
+
+// 2. Vélemény beküldése a modál "Vélemény Továbbítása" gombjáról
+async function executeSubmitCreativeOpinion() {
+  if (!pendingCreativeRequestId) return;
+
+  const inputEl = document.getElementById('creativeOpinionInput');
+  const opinionText = inputEl ? inputEl.value.trim() : '';
+
+  if (!opinionText) {
+    showToast("Kérlek írj egy rövid véleményt a továbbítás előtt!", "warning");
+    if (inputEl) inputEl.focus();
+    return;
+  }
+
+  const modalEl = document.getElementById('creativeOpinionModal');
+  if (modalEl) {
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    if (modal) modal.hide();
+  }
+
+  await submitCreativeOpinion(pendingCreativeRequestId, opinionText);
+  pendingCreativeRequestId = null;
 }
 
   async function actionRequest(id, action) {
