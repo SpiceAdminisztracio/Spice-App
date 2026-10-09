@@ -4301,22 +4301,44 @@ function safeSetGlobalLoading(isLoading, message) {
   }
 }
 
-  function getNextApproverEmail(profile) {
-    const adminEmail = 'admin.oranyilvantartas@spicecommunication.hu';
-    const role = (profile.jogosultsag || profile.role || 'user').toLowerCase().trim();
+  // Segédfüggvény a Kreatív csapatok azonosítására
+function isCreativeTeamUser(profile) {
+  if (!profile || !profile.csoport) return false;
+  const safeNorm = (s) => String(s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const cs = safeNorm(profile.csoport);
+  return cs.includes('kreativ') || cs.includes('copy') || cs.includes('grafik');
+}
 
-    const csv = cleanEmail(profile.csoportvezeto_email);
-    const ldr = cleanEmail(profile.leader_email);
-    const mgr = cleanEmail(profile.manager_email);
-    const boss = cleanEmail(profile.boss_email);
+function getNextApproverEmail(profile) {
+  if (!profile) return 'admin.oranyilvantartas@spicecommunication.hu';
 
-    if (role === 'user') return csv || ldr || mgr || adminEmail;
-    if (role === 'csoportvezeto') return ldr || mgr || adminEmail;
-    if (role === 'leader') return mgr || adminEmail;
-    if (role === 'manager') return boss || adminEmail;
-    
-    return adminEmail;
+  const adminEmail = 'admin.oranyilvantartas@spicecommunication.hu';
+  const role = typeof normalizeStr === 'function' 
+    ? normalizeStr(profile.jogosultsag || profile.role) 
+    : String(profile.jogosultsag || profile.role || '').toLowerCase().trim();
+
+  const csv = typeof cleanEmail === 'function' ? cleanEmail(profile.csoportvezeto_email) : String(profile.csoportvezeto_email || '').toLowerCase().trim();
+  const ldr = typeof cleanEmail === 'function' ? cleanEmail(profile.leader_email) : String(profile.leader_email || '').toLowerCase().trim();
+  const mgr = typeof cleanEmail === 'function' ? cleanEmail(profile.manager_email) : String(profile.manager_email || '').toLowerCase().trim();
+  const boss = typeof cleanEmail === 'function' ? cleanEmail(profile.boss_email) : String(profile.boss_email || '').toLowerCase().trim();
+
+  // 🎯 Kreatív csapat tagjainak azonosítása
+  const isCreative = typeof isCreativeTeamUser === 'function' && isCreativeTeamUser(profile);
+
+  if (role === 'user') {
+    // Kreatív dolgozó esetén átugorjuk a csoportvezetőt (csv) -> közvetlenül a Leader kapja!
+    if (isCreative) {
+      return ldr || mgr || adminEmail;
+    }
+    return csv || ldr || mgr || adminEmail;
   }
+
+  if (role === 'csoportvezeto') return ldr || mgr || adminEmail;
+  if (role === 'leader') return mgr || adminEmail;
+  if (role === 'manager') return boss || adminEmail;
+  
+  return adminEmail;
+}
 
   function openRequestModal(targetDate, jobNumber = "", hoursVal = 0) {
     if (!targetDate) return;

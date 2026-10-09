@@ -2120,21 +2120,34 @@ const cleanEmail = (str) => String(str || '').replace(/"/g, '').trim().toLowerCa
   }
 
   function getNextApproverEmail(profile) {
+    if (!profile) return 'admin.oranyilvantartas@spicecommunication.hu';
+
     const adminEmail = 'admin.oranyilvantartas@spicecommunication.hu';
-    const role = normalizeStr(profile.jogosultsag || profile.role);
+    const role = typeof normalizeStr === 'function' 
+      ? normalizeStr(profile.jogosultsag || profile.role) 
+      : String(profile.jogosultsag || profile.role || '').toLowerCase().trim();
 
     const csv = (profile.csoportvezeto_email || '').toLowerCase().trim();
     const ldr = (profile.leader_email || '').toLowerCase().trim();
     const mgr = (profile.manager_email || '').toLowerCase().trim();
     const boss = (profile.boss_email || '').toLowerCase().trim();
 
-    if (role === 'user') return csv || ldr || mgr || adminEmail;
+    // 🎯 Kreatív csapat tagjainak azonosítása
+    const isCreative = typeof isCreativeTeamUser === 'function' && isCreativeTeamUser(profile);
+
+    if (role === 'user') {
+      // Kreatív dolgozó esetén átugorjuk a csoportvezetőt (csv) -> közvetlenül a Leader kapja!
+      if (isCreative) {
+        return ldr || mgr || adminEmail;
+      }
+      return csv || ldr || mgr || adminEmail;
+    }
+
     if (role === 'csoportvezeto') return ldr || mgr || adminEmail;
     if (role === 'leader') return mgr || adminEmail;
     if (role === 'manager') return boss || adminEmail;
     return adminEmail;
-  }
-
+}
   async function sendAutomatedEmail(toEmail, subject, bodyText, htmlBodyText) {
   const GAS_EMAIL_URL = "https://script.google.com/macros/s/AKfycbycePikT3E6hcNMp-hoA_fQI5UxRr5fdY2sizyGOZM5W44mkfWlnMLC8mHuHjF9YQ/exec";
   const EMAIL_SECRET_TOKEN = "SPICE_HR_PORTAL_SECRET_TOKEN_2026";
@@ -3051,12 +3064,23 @@ async function submitCreativeOpinion(requestId, opinionText) {
 
     showToast("Vélemény sikeresen rögzítve, kérelem továbbítva a felettesnek!", "success");
 
-    // 4. E-mail értesítés a felettesnek Adél véleményével együtt
-    const subject = `Új szabadság kérelem (Véleményezve) - ${req.nev}`;
-    const bodyText = `Szia!\n\n${req.nev} távolléti kérelmet nyújtott be (${req.kezdo_datum} - ${req.veg_datum}).\n\n${formattedOpinion}`;
+    // 🎯 4. E-MAIL ÉRTESÍTÉS A FELETTESNEK A LILA KÁRTYÁS HTML SABLONNAL
+    const subject = `💬 Véleményezett kérelem - ${req.nev}`;
+    const bodyText = `Szia!\n\n${reviewerName} szakmailag véleményezte ${req.nev} távolléti kérelmét (${req.kezdo_datum} - ${req.veg_datum}):\n\n"${opinionText.trim()}"`;
+
+    const htmlBodyText = typeof buildCreativeOpinionEmailHtml === 'function' 
+      ? buildCreativeOpinionEmailHtml(
+          req.nev,
+          req.tipus,
+          req.kezdo_datum,
+          req.veg_datum,
+          opinionText.trim(),
+          reviewerName
+        )
+      : bodyText.replace(/\n/g, '<br>');
 
     if (typeof sendAutomatedEmail === 'function') {
-      sendAutomatedEmail(nextApprover, subject, bodyText, bodyText.replace(/\n/g, '<br>'));
+      sendAutomatedEmail(nextApprover, subject, bodyText, htmlBodyText);
     }
 
     // Felület frissítése (hogy eltűnjön a listából)
@@ -3068,6 +3092,48 @@ async function submitCreativeOpinion(requestId, opinionText) {
     console.error("Hiba a véleményezés során:", err);
     showToast("Hiba történt: " + err.message, "danger");
   }
+}
+
+function buildCreativeOpinionEmailHtml(dolgozoNeve, tipus, kezdoDatum, vegDatum, velemeny, velemenyezoNeve) {
+  const safeName = escapeHtml(dolgozoNeve);
+  const safeType = escapeHtml(tipus);
+  const safeStart = escapeHtml(kezdoDatum);
+  const safeEnd = escapeHtml(vegDatum);
+  const safeOpinion = escapeHtml(velemeny);
+  const safeReviewer = escapeHtml(velemenyezoNeve || 'Varga Adél');
+  const portalUrl = window.location.href.split('#')[0];
+
+  return `
+  <div style="font-family: Arial, sans-serif; background-color: #f1f5f9; padding: 25px 10px;">
+    <div style="max-width: 500px; margin: 0 auto; background: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+      <div style="background-color: #6f42c1; padding: 20px; text-align: center; color: #ffffff;">
+        <h3 style="margin: 0; font-size: 20px;">Véleményezett kérelem 💬</h3>
+      </div>
+      <div style="padding: 25px; color: #334155;">
+        <p style="margin-top: 0;">Kedves Vezető!</p>
+        <p><strong>${safeReviewer}</strong> szakmailag véleményezte <strong>${safeName}</strong> távolléti kérelmét, ami most hozzád érkezett jóváhagyásra:</p>
+        
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0; background-color: #f8fafc; border-radius: 6px; overflow: hidden;">
+          <tr>
+            <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; color: #64748b; width: 35%;">Típus:</td>
+            <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-weight: bold; color: #0f172a;">${safeType}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; color: #64748b;">Időtartam:</td>
+            <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-weight: bold; color: #0f172a;">${safeStart} &rarr; ${safeEnd}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px 12px; color: #64748b; vertical-align: top;">Szakmai vélemény:</td>
+            <td style="padding: 10px 12px; color: #6f42c1; font-weight: bold; font-style: italic;">"${safeOpinion}"</td>
+          </tr>
+        </table>
+
+        <div style="text-align: center; margin-top: 25px;">
+          <a href="${portalUrl}" style="background-color: #6f42c1; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">Portál megnyitása</a>
+        </div>
+      </div>
+    </div>
+  </div>`;
 }
 
   function check15DayRule() {
