@@ -3995,7 +3995,7 @@ function renderGlobalTimeline(data) {
 
     bodyHTML += `<tr class="gantt-row">`;
     
-    // 🎯 ELKÜLÖNÍTETT KITŰZŐ-LOGIKA (BOSS vs MGR vs LEAD vs CSV)
+    // Kitűző logika (BOSS, MGR, LEAD, CSV)
     const rawRole = (emp.jogosultsag || emp.role || emp.pozicio || 'user').toLowerCase().trim();
     let roleBadge = '';
     
@@ -4018,50 +4018,63 @@ function renderGlobalTimeline(data) {
       const isWeekend = (d.getDay() === 0 || d.getDay() === 6);
       const isToday = (dateStr === todayStr);
 
-      const req = data.requests.find(r => {
+      const dayReqs = data.requests.filter(r => {
         const reqEmailClean = String(r.user_email || r.email || r.munkatars_email || '').toLowerCase().trim();
         const isUserMatch = (r.profile_id && emp.id && r.profile_id === emp.id) ||
           (reqEmailClean && empEmailClean && reqEmailClean === empEmailClean);
 
-        return isUserMatch && dateStr >= r.kezdo_datum && dateStr <= (r.veg_datum || r.kezdo_datum);
+        const reqEnd = r.veg_datum || r.kezdo_datum;
+        return isUserMatch && dateStr >= r.kezdo_datum && dateStr <= reqEnd;
       });
 
       let cellContent = '';
       let cellClasses = [];
-      let tdAttributes = `style="text-align: center; vertical-align: middle; padding: 2px 1px;"`;
+      let tdAttributes = `style="text-align: center; vertical-align: middle; padding: 1px;"`;
 
       if (isWeekend) cellClasses.push('weekend-cell');
       if (isToday) cellClasses.push('today-cell');
 
-      if (req) {
-        const rawType = (req.tipus || '').trim();
-        const config = ABSENCE_RENDER_MAP[rawType] || { short: 'T', bg: '#0284c7', text: '#ffffff' };
-        const st = String(req.status || '').toLowerCase();
-        const isPending = st.includes('pending') || st.includes('fugg');
-        const pendingStyle = isPending ? 'border: 1.5px dashed #f59e0b; opacity: 0.85;' : '';
+      if (dayReqs.length > 0) {
+        let displayInfos = [];
+        const isMultiple = dayReqs.length > 1;
 
-        // 🎯 IDŐINTERVALLUM FORMÁZÁSA (NÉV NÉLKÜL)
-        let timeStr = 'Egész napos';
-        if (req.kezdo_ido && req.veg_ido) {
-          timeStr = `${req.kezdo_ido} - ${req.veg_ido}`;
-        } else if (req.ido || req.ido_intervallum) {
-          timeStr = `${req.ido || req.ido_intervallum}`;
-        }
+        const badgesHtml = dayReqs.map(req => {
+          const rawType = (req.tipus || '').trim();
+          const config = ABSENCE_RENDER_MAP[rawType] || { short: 'T', bg: '#0284c7', text: '#ffffff' };
+          const st = String(req.status || '').toLowerCase();
+          const isPending = st.includes('pending') || st.includes('fugg');
+          const pendingStyle = isPending ? 'border: 1px dashed #f59e0b; opacity: 0.85;' : '';
 
-        const displayInfo = `${req.tipus}: ${timeStr}`;
-        // Biztonságos JS stringté alakítás, ami nem akasztja meg a böngészőt!
-        const safeJSInfo = escapeHtml(displayInfo).replace(/'/g, "\\'"); 
+          let timeStr = 'Egész napos';
+          if (req.kezdo_ido && req.veg_ido) {
+            timeStr = `${req.kezdo_ido} - ${req.veg_ido}`;
+          } else if (req.ido || req.ido_intervallum) {
+            timeStr = `${req.ido || req.ido_intervallum}`;
+          }
 
-        // 🎯 VÉGSŐ MOBILOS BIZTONSÁG: Az onclick eseményt NEM a <td>-re tesszük, hanem közvetlenül a gombra, 
-        // egy "szélesített" érintési zónával.
-        cellContent = `
-          <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; cursor: pointer;"
-               onclick="event.preventDefault(); event.stopPropagation(); setTimeout(() => { if(typeof showToast === 'function') { showToast('${safeJSInfo}', 'info'); } else if(typeof showModal === 'function') { showModal('${safeJSInfo}', 'Távollét Részletei'); } else { alert('${safeJSInfo}'); } }, 50);">
+          displayInfos.push(`${req.tipus}: ${timeStr}`);
+
+          // Több jelölés esetén kicsit alacsonyabb magasság és betűméret a függőleges illeszkedéshez
+          const badgeSizeStyle = isMultiple
+            ? 'height: 11px; line-height: 11px; font-size: 0.5rem; padding: 0;'
+            : 'height: 16px; line-height: 16px; font-size: 0.62rem; padding: 0;';
+
+          return `
             <span class="gantt-badge" 
-                  style="background-color: ${config.bg}; color: ${config.text}; ${pendingStyle}; display: inline-block; width: 100%; text-align: center;"
-                  title="${escapeHtml(displayInfo)}">
+                  style="background-color: ${config.bg}; color: ${config.text}; ${pendingStyle} ${badgeSizeStyle} width: 100%; display: block; text-align: center; border-radius: 3px;"
+                  title="${escapeHtml(req.tipus)} (${timeStr})">
               ${config.short}
-            </span>
+            </span>`;
+        }).join('');
+
+        const combinedDisplayInfo = displayInfos.join(' | ');
+        const safeJSInfo = escapeHtml(combinedDisplayInfo).replace(/'/g, "\\'"); 
+
+        // 🎯 FÜGGŐLEGES ELRENDEZÉS (flex-direction: column)
+        cellContent = `
+          <div style="width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; cursor: pointer; padding: 1px 0;"
+               onclick="event.preventDefault(); event.stopPropagation(); setTimeout(() => { if(typeof showToast === 'function') { showToast('${safeJSInfo}', 'info'); } else if(typeof showModal === 'function') { showModal('${safeJSInfo}', 'Távollét Részletei'); } else { alert('${safeJSInfo}'); } }, 50);">
+            ${badgesHtml}
           </div>`;
       }
 
@@ -4088,74 +4101,96 @@ function renderGlobalTimeline(data) {
   }
 
   function renderCalendar() {
-    const container = document.getElementById('calendarDaysContainer');
-    const label = document.getElementById('calendarMonthLabel');
-    if (!container || !label) return;
+  const container = document.getElementById('calendarDaysContainer');
+  const label = document.getElementById('calendarMonthLabel');
+  if (!container || !label) return;
 
-    label.innerText = `${currentCalYear}. ${HUNGARIAN_MONTHS[currentCalMonth]}`;
-    const firstDay = new Date(currentCalYear, currentCalMonth, 1);
-    const lastDay = new Date(currentCalYear, currentCalMonth + 1, 0).getDate();
+  label.innerText = `${currentCalYear}. ${HUNGARIAN_MONTHS[currentCalMonth]}`;
+  const firstDay = new Date(currentCalYear, currentCalMonth, 1);
+  const lastDay = new Date(currentCalYear, currentCalMonth + 1, 0).getDate();
 
-    let startDay = firstDay.getDay() - 1;
-    if (startDay < 0) startDay = 6;
+  let startDay = firstDay.getDay() - 1;
+  if (startDay < 0) startDay = 6;
 
-    let calendarHTML = '';
-    for (let i = 0; i < startDay; i++) {
-      calendarHTML += `<div class="calendar-day other-month"></div>`;
-    }
-
-    const today = new Date();
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-
-    for (let day = 1; day <= lastDay; day++) {
-      const dateStr = `${currentCalYear}-${String(currentCalMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      
-      const currentDate = new Date(currentCalYear, currentCalMonth, day);
-      const isSunday = currentDate.getDay() === 0;
-      const isHoliday = holidayDates.includes(dateStr);
-
-      const isTodayClass = (dateStr === todayStr) ? 'today' : '';
-      const nonWorkingClass = (isSunday || isHoliday) ? 'other-month' : '';
-      
-      const tooltipText = isHoliday ? 'Ünnepnap / Munkaszüneti nap' : (isSunday ? 'Vasárnap' : '');
-      const titleAttr = tooltipText ? `title="${tooltipText}"` : '';
-
-      let badges = '';
-
-      userRequestsCache.forEach(req => {
-        if (req.status !== 'Visszavonva' && req.status !== 'rejected' && req.status !== 'Elutasítva' && dateStr >= req.kezdo_datum && dateStr <= req.veg_datum) {
-          
-          const rawType = (req.tipus || '').trim();
-          const config = ABSENCE_RENDER_MAP[rawType] || { 
-            short: rawType ? rawType.substring(0, 2).toUpperCase() : 'SZ', 
-            bg: '#84cc16', 
-            text: '#1a4731' 
-          };
-
-          const isPending = ['pending_level1', 'pending_admin', 'Függőben'].includes(req.status);
-          const pendingStyle = isPending ? 'border: 1.5px dashed #ffc107; font-style: italic;' : '';
-          const pendingIndicator = isPending ? ' ⏳' : '';
-
-          badges += `
-            <div class="absence-badge" 
-                 style="background-color:${config.bg}; color:${config.text}; ${pendingStyle}" 
-                 title="${escapeHtml(req.tipus)} (${req.status})">
-              ${config.short}${pendingIndicator}
-            </div>
-          `;
-        }
-      });
-
-      calendarHTML += `
-        <div class="calendar-day ${isTodayClass} ${nonWorkingClass}" ${titleAttr}>
-          <span class="calendar-day-num">${day}</span>
-          <div class="calendar-absences-container">${badges}</div>
-        </div>
-      `;
-    }
-
-    container.innerHTML = calendarHTML;
+  let calendarHTML = '';
+  for (let i = 0; i < startDay; i++) {
+    calendarHTML += `<div class="calendar-day other-month"></div>`;
   }
+
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+  for (let day = 1; day <= lastDay; day++) {
+    const dateStr = `${currentCalYear}-${String(currentCalMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    
+    const currentDate = new Date(currentCalYear, currentCalMonth, day);
+    const isSunday = currentDate.getDay() === 0;
+    const isHoliday = holidayDates.includes(dateStr);
+
+    const isTodayClass = (dateStr === todayStr) ? 'today' : '';
+    const nonWorkingClass = (isSunday || isHoliday) ? 'other-month' : '';
+    
+    const tooltipText = isHoliday ? 'Ünnepnap / Munkaszüneti nap' : (isSunday ? 'Vasárnap' : '');
+    const titleAttr = tooltipText ? `title="${tooltipText}"` : '';
+
+    let badges = '';
+
+    // 🎯 Kigyűjtjük a naphoz tartozó összes érvényes (nem törölt) kérelmet
+    const dayReqs = userRequestsCache.filter(req => {
+      const st = String(req.status || '').toLowerCase();
+      const isCancelledOrRejected = ['visszavonva', 'visszavont', 'rejected', 'elutasitva', 'elutasítva', 'cancelled'].includes(st);
+      
+      const reqEnd = req.veg_datum || req.kezdo_datum;
+      return !isCancelledOrRejected && dateStr >= req.kezdo_datum && dateStr <= reqEnd;
+    });
+
+    // Ha van kérelem az adott napon (akár több is)
+    if (dayReqs.length > 0) {
+      dayReqs.forEach(req => {
+        const rawType = (req.tipus || '').trim();
+        const config = ABSENCE_RENDER_MAP[rawType] || { 
+          short: rawType ? rawType.substring(0, 2).toUpperCase() : 'SZ', 
+          bg: '#84cc16', 
+          text: '#1a4731' 
+        };
+
+        const isPending = ['pending_level1', 'pending_admin', 'pending_creative_review', 'Függőben'].includes(req.status);
+        const pendingStyle = isPending ? 'border: 1.5px dashed #ffc107; font-style: italic;' : '';
+        const pendingIndicator = isPending ? ' ⏳' : '';
+
+        // 🎯 IDŐINTERVALLUM HOZZÁADÁSA A TOOLTIPHEZ (Súgószöveg)
+        let timeStr = 'Egész napos';
+        if (req.kezdo_ido && req.veg_ido) {
+          timeStr = `${req.kezdo_ido} - ${req.veg_ido}`;
+        } else if (req.ido || req.ido_intervallum) {
+          timeStr = `${req.ido || req.ido_intervallum}`;
+        }
+
+        const hoverTitle = escapeHtml(`${req.tipus} (${timeStr}) - ${req.status}`);
+
+        badges += `
+          <div class="absence-badge" 
+               style="background-color:${config.bg}; color:${config.text}; ${pendingStyle} width: 100%; box-sizing: border-box;" 
+               title="${hoverTitle}">
+            ${config.short}${pendingIndicator}
+          </div>
+        `;
+      });
+    }
+
+    calendarHTML += `
+      <div class="calendar-day ${isTodayClass} ${nonWorkingClass}" ${titleAttr}>
+        <span class="calendar-day-num">${day}</span>
+        <div class="calendar-absences-container" style="display: flex; flex-direction: column; align-items: stretch; gap: 3px;">
+          ${badges}
+        </div>
+      </div>
+    `;
+  }
+
+  container.innerHTML = calendarHTML;
+}
+
 
   // ELEMHASZNÁLATI ÉS POPULÁCIÓS SKÁLA: PONTOS JOGOSULTSÁG LISTA
 const NON_USER_ROLES = ['csoportvezeto', 'leader', 'manager', 'boss', 'admin'];
@@ -6689,7 +6724,6 @@ async function renderTeamLeaveMatrix() {
     const isMyRoleAdmin = myRole.includes('admin') || myRole.includes('boss');
     const isMyRoleManager = (myRole.includes('manag') || myRole.includes('mgr')) && !isMyRoleAdmin;
 
-    // 🎯 KIZÁRÓLAG A SAJÁT PROFILBAN LÉVŐ CSOPORTOKAT ADJUK HOZZÁ (Nincs beosztottakból öröklődés)
     const myOpGroups = new Set();
     const addOpGroup = (rawGroup, targetSet) => {
       if (!rawGroup || String(rawGroup).toUpperCase() === 'NULL') return;
@@ -6720,7 +6754,6 @@ async function renderTeamLeaveMatrix() {
                                pRole.includes('vezeto') || pRole.includes('csoportvez') || 
                                pRole.includes('csv');
 
-      // 🎯 DINAMIKUS MANAGER SZŰRŐ: Ha van a csoportban Lead/CSV, csak őket látja a Manager. Ha nincs, látja a dolgozókat is!
       if (isMyRoleManager) {
         const empGroupClean = cleanStr(p.csoport || '');
         const hasSubLeaderInGroup = (profiles || []).some(sub => {
@@ -6730,13 +6763,11 @@ async function renderTeamLeaveMatrix() {
           return subRole.includes('lead') || subRole.includes('head') || subRole.includes('csoportvez') || subRole.includes('csv');
         });
 
-        // Ha van középvezető (Lead/CSV) a csoportban, a sima dolgozókat elrejtjük a Manager elől:
         if (hasSubLeaderInGroup && !isEmpLeaderOrCsv) {
           return false;
         }
       }
 
-      // 🎯 PONTOS EGYEZÉS A FELETTESI LÁNCBAN
       const empM = safeCleanEmail(p.manager_email);
       const empL = safeCleanEmail(p.leader_email);
       const empC = safeCleanEmail(p.csoportvezeto_email);
@@ -6759,7 +6790,6 @@ async function renderTeamLeaveMatrix() {
       return false;
     });
 
-    // 🎯 1000 SOROS SUPABASE LIMIT KIKÜSZÖBÖLÉSE
     let allLeaves = [];
     let from = 0;
     const step = 1000;
@@ -6878,14 +6908,79 @@ async function renderTeamLeaveMatrix() {
 
     let html = `
       <style>
-        #teamLeaveMatrixContainer { overflow-x: auto; background: #ffffff; }
-        .matrix-table { border-collapse: collapse !important; font-size: 0.72rem; table-layout: fixed; min-width: 100%; }
-        .matrix-table th, .matrix-table td { border: 1px solid #cbd5e1 !important; vertical-align: middle !important; text-align: center !important; padding: 2px !important; height: 28px !important; }
-        .matrix-table .sticky-col { position: sticky; left: 0; z-index: 10; background-color: #ffffff; width: 160px !important; min-width: 160px !important; max-width: 160px !important; text-align: left !important; padding-left: 8px !important; border-right: 2px solid #94a3b8 !important; }
-        .matrix-table thead .sticky-col { background-color: #f8fafc; z-index: 11; }
+        /* 🎯 KONTÉNER MAGASSÁG ÉS GÖRGETÉS */
+        #teamLeaveMatrixContainer { 
+          overflow: auto; 
+          max-height: 65vh; /* 65% képernyőmagasság */
+          background: #ffffff; 
+          border: 1px solid #cbd5e1; 
+          border-radius: 6px;
+        }
+        
+        /* 🎯 TÁBLÁZAT ALAPOK (separate kell a hibátlan sticky-hez) */
+        .matrix-table { 
+          border-collapse: separate !important; 
+          border-spacing: 0; 
+          font-size: 0.72rem; 
+          table-layout: fixed; 
+          min-width: 100%; 
+          border: none !important; 
+          margin: 0 !important; 
+        }
+        
+        .matrix-table th, .matrix-table td { 
+          border-right: 1px solid #cbd5e1 !important; 
+          border-bottom: 1px solid #cbd5e1 !important; 
+          vertical-align: middle !important; 
+          text-align: center !important; 
+          padding: 1px !important; 
+          min-height: 28px !important; 
+        }
+        
+        /* Felső és bal keretek lezárása */
+        .matrix-table th:first-child, .matrix-table td:first-child { border-left: 1px solid #cbd5e1 !important; }
+        .matrix-table thead th { border-top: 1px solid #cbd5e1 !important; }
+
+        /* 🎯 FÜGGŐLEGESEN RÖGZÍTETT FEJLÉC */
+        .matrix-table thead th {
+          position: sticky;
+          top: 0;
+          z-index: 11;
+          background-clip: padding-box; /* Nincs szín átütés */
+        }
+        
+        /* Fejléc cellák stabil színei */
+        .matrix-table thead th { background-color: #f8fafc; }
+        .matrix-table thead th.bg-primary { background-color: #0d6efd !important; color: #ffffff !important; }
+        .matrix-table thead th.bg-light { background-color: #f8fafc !important; }
+        .matrix-table thead th.bg-secondary-subtle { background-color: #e2e8f0 !important; }
+
+        /* 🎯 VÍZSZINTESEN RÖGZÍTETT ELSŐ OSZLOP */
+        .matrix-table .sticky-col { 
+          position: sticky; 
+          left: 0; 
+          z-index: 10; 
+          background-color: #ffffff; 
+          width: 160px !important; 
+          min-width: 160px !important; 
+          max-width: 160px !important; 
+          text-align: left !important; 
+          padding-left: 8px !important; 
+          border-right: 2px solid #94a3b8 !important; 
+          background-clip: padding-box;
+        }
+        
+        /* 🎯 METSÉSPONT (Bal felső sarok) */
+        .matrix-table thead .sticky-col { 
+          z-index: 12; 
+          background-color: #f8fafc !important;
+        }
+
         .matrix-day-col { width: 26px !important; min-width: 26px !important; max-width: 26px !important; padding: 0 !important; }
-        .matrix-badge { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 20px !important; height: 20px !important; font-size: 0.6rem !important; font-weight: 800 !important; border-radius: 4px !important; margin: 0 auto !important; padding: 0 !important; line-height: 1 !important; box-shadow: 0 1px 2px rgba(0,0,0,0.2) !important; }
-        .matrix-group-header { background-color: #f1f5f9 !important; border-bottom: 2px solid #cbd5e1 !important; border-top: 2px solid #cbd5e1 !important; }
+        .matrix-badge { display: flex !important; align-items: center !important; justify-content: center !important; width: 20px !important; height: 18px !important; font-size: 0.6rem !important; font-weight: 800 !important; border-radius: 3px !important; margin: 0 auto !important; padding: 0 !important; line-height: 1 !important; box-shadow: 0 1px 2px rgba(0,0,0,0.2) !important; }
+        
+        .matrix-group-header { background-color: #f1f5f9 !important; }
+        .matrix-group-header td { border-bottom: 2px solid #cbd5e1 !important; border-top: 2px solid #cbd5e1 !important; }
       </style>
       <table class="table table-sm table-hover align-middle mb-0 matrix-table">
         <thead class="table-light">
@@ -6968,6 +7063,7 @@ async function renderTeamLeaveMatrix() {
 
       let tavalyiKivett = 0;
       let ideiKivett = 0;
+
       const dailyLeaveMap = {};
 
       userLeaves.forEach(l => {
@@ -6992,7 +7088,8 @@ async function renderTeamLeaveMatrix() {
             const dateStr = `${dY}-${dM}-${dD}`;
 
             if (dateStr.startsWith(selectedMonth)) {
-              dailyLeaveMap[dateStr] = { ...l, typeInfo, isPending, isApproved };
+              if (!dailyLeaveMap[dateStr]) dailyLeaveMap[dateStr] = [];
+              dailyLeaveMap[dateStr].push({ ...l, typeInfo, isPending, isApproved });
             }
             currD.setDate(currD.getDate() + 1);
           }
@@ -7042,7 +7139,7 @@ async function renderTeamLeaveMatrix() {
       const rowClass = isPassiveUser ? 'opacity-75 text-muted' : '';
 
       html += `
-        <tr style="height: 25px;" class="${rowClass}">
+        <tr style="height: 28px;" class="${rowClass}">
           <td class="sticky-col">
             <div style="font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${empName}">
               ${empName}${roleInfo.badge}${passiveBadge}
@@ -7075,15 +7172,51 @@ async function renderTeamLeaveMatrix() {
           }
         }
 
-        const dayLeave = dailyLeaveMap[dStr];
+        let dayLeaves = dailyLeaveMap[dStr] || [];
+
+        // TISZTÍTÁSI ÉS INTELLIGENS SZŰRÉSI SZABÁLYOK:
+        if (dayLeaves.length > 1) {
+          const uniqueTypeMap = new Map();
+          dayLeaves.forEach(item => {
+            const code = item.typeInfo.code;
+            if (!uniqueTypeMap.has(code)) {
+              uniqueTypeMap.set(code, item);
+            }
+          });
+          dayLeaves = Array.from(uniqueTypeMap.values());
+
+          const fullDayCodes = ['SZ', 'T', 'B', 'A', 'FN', 'K'];
+          const hasFullDayAbsence = dayLeaves.some(item => fullDayCodes.includes(item.typeInfo.code));
+
+          if (hasFullDayAbsence) {
+            dayLeaves = dayLeaves.filter(item => item.typeInfo.code !== 'HO');
+          }
+        }
 
         let cellContent = '';
         if (isPassiveDay) {
           cellContent = `<span style="font-size: 0.58rem;" class="fw-bold text-secondary">SZÜL/TB</span>`;
-        } else if (dayLeave && dayLeave.typeInfo) {
-          const info = dayLeave.typeInfo;
-          const pendingStyle = dayLeave.isPending ? 'border: 1.5px dashed #f59e0b; opacity: 0.85;' : '';
-          cellContent = `<span class="matrix-badge ${info.cls}" style="${pendingStyle}" title="${info.title}${dayLeave.isPending ? ' (Függőben)' : ''}">${info.code}</span>`;
+        } else if (dayLeaves.length > 0) {
+          const isMultiple = dayLeaves.length > 1;
+          const badgesHtml = dayLeaves.map(dayLeave => {
+            const info = dayLeave.typeInfo;
+            const pendingStyle = dayLeave.isPending ? 'border: 1px dashed #f59e0b; opacity: 0.85;' : '';
+            const badgeSizeStyle = isMultiple
+              ? 'height: 11px; line-height: 11px; font-size: 0.5rem; padding: 0;'
+              : 'height: 18px; line-height: 18px; font-size: 0.65rem; padding: 0;';
+
+            return `
+              <span class="matrix-badge ${info.cls}" 
+                    style="${pendingStyle} ${badgeSizeStyle} width: 100%; display: flex; align-items: center; justify-content: center; text-align: center; border-radius: 3px;" 
+                    title="${info.title}${dayLeave.isPending ? ' (Függőben)' : ''}">
+                ${info.code}
+              </span>`;
+          }).join('');
+
+          cellContent = `
+            <div style="width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 1px 0;">
+              ${badgesHtml}
+            </div>`;
         }
 
         const bgClass = isPassiveDay ? 'bg-secondary-subtle' : (isSun ? 'bg-secondary-subtle' : (isSat ? 'bg-light' : ''));
