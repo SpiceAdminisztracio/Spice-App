@@ -3265,11 +3265,21 @@ async function checkMissingRecords(evt) {
         }
 
         if (missingDays.length > 0) {
-          missingReport[email] = { name: displayName, days: missingDays, email: email };
+          // 🎯 A PROFILBÓL KIOLVASOTT last_reminder_date KÖZPONTI MEZŐ HOZZÁADÁSA
+          missingReport[email] = { 
+            name: displayName, 
+            days: missingDays, 
+            email: email,
+            lastReminderDate: p.last_reminder_date ? String(p.last_reminder_date).substring(0, 10) : null
+          };
         }
       });
 
       lastMissingReportForEmail = missingReport;
+
+      // 🎯 MAI HELYI DÁTUM (YYYY-MM-DD)
+      const now = new Date();
+      const todayLocal = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
 
       let html = "", count = 0;
       for (let key in missingReport) {
@@ -3280,6 +3290,14 @@ async function checkMissingRecords(evt) {
         const safeName = typeof escapeHtml === 'function' ? escapeHtml(userObj.name) : userObj.name;
         const safeEmail = typeof escapeHtml === 'function' ? escapeHtml(userObj.email) : userObj.email;
 
+        // 🎯 KÖZPONTI DÁTUM ELLENŐRZÉSE: MA MÁR KÜLDTEK NEKI EMLÉKEZTETŐT?
+        const isSentToday = (userObj.lastReminderDate === todayLocal);
+
+        const btnDisabled = isSentToday ? 'disabled' : '';
+        const btnClass = isSentToday ? 'btn-outline-secondary text-muted' : 'btn-outline-warning text-dark';
+        const iconClass = isSentToday ? 'bi-check2' : 'bi-send';
+        const titleText = isSentToday ? 'Mai napra már elküldve egy vezető által' : 'Emlékeztető küldése e-mailben';
+
         html += `
           <div class="card p-2 mb-2 border-start border-4 border-danger bg-light">
             <div class="d-flex justify-content-between align-items-center">
@@ -3287,8 +3305,8 @@ async function checkMissingRecords(evt) {
                 <p class="small mb-1 fw-bold">${safeName}</p>
                 <div class="d-flex flex-wrap">${tags}</div>
               </div>
-              <button class="btn btn-sm btn-outline-warning text-dark" title="Emlékeztető küldése e-mailben" onclick="sendReminder('${safeName.replace(/'/g, "\\'")}', '${safeEmail}')">
-                <i class="bi bi-send"></i>
+              <button data-email="${safeEmail}" class="btn btn-sm ${btnClass}" title="${titleText}" onclick="sendReminder('${safeName.replace(/'/g, "\\'")}', '${safeEmail}', this)" ${btnDisabled}>
+                <i class="bi ${iconClass}"></i>
               </button>
             </div>
           </div>`;
@@ -3617,32 +3635,134 @@ function safeSetGlobalLoading(isLoading, message) {
   }
 }
 
-  async function sendReminder(workerName, workerEmail) {
-    const emailCleanKey = cleanEmail(workerEmail);
-    const missingData = lastMissingReportForEmail[emailCleanKey] || lastMissingReportForEmail[workerEmail];
-    
-    if (!missingData || !missingData.days || missingData.days.length === 0) {
-      return showModal("A kiválasztott munkatársnak nincsenek hiányzó napjai.", "Információ");
-    }
-
-    const senderName = currentUserProfile?.nev || 'Vezetőség';
-    const subject = `Hiányzó munkaidő rögzítés - ${workerName}`;
-    const daysSummary = missingData.days.map(d => `- ${d.date}: rögzítve ${d.hours} óra (elvárt: ${d.required} óra)`).join('\n');
-    const bodyText = `Szia ${workerName}!\n\nKérlek pótold a hiányzó óráidat az alábbi napokon:\n${daysSummary}\n\nÜdvözlettel,\n${senderName}`;
-    
-    const htmlBodyText = buildReminderEmailHtml(workerName, missingData.days);
-
-    setGlobalLoading(true, "Emlékeztető küldése...");
-
-    try {
-      await sendAutomatedEmail(workerEmail, subject, bodyText, htmlBodyText);
-      setGlobalLoading(false);
-      showModal(`Az emlékeztető e-mail sikeresen elküldve <strong>${workerName}</strong> részére!`, "Siker");
-    } catch (err) {
-      setGlobalLoading(false);
-      showModal("Hiba az e-mail küldésekor: " + err.message, "Hiba");
-    }
+  async function sendReminder(workerName, workerEmail, btnElement) {
+  const emailCleanKey = cleanEmail(workerEmail);
+  const missingData = lastMissingReportForEmail[emailCleanKey] || lastMissingReportForEmail[workerEmail];
+  
+  if (!missingData || !missingData.days || missingData.days.length === 0) {
+    return showModal("A kiválasztott munkatársnak nincsenek hiányzó napjai.", "Információ");
   }
+
+  // 1. Dátum ellenőrzése a gyorsítótárazott adatok alapján
+  const now = new Date();
+  const todayLocal = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  
+  if (missingData.lastReminderDate === todayLocal) {
+    return showModal("Ennek a munkatársnak ma már ment ki emlékeztető egy vezető által!", "Információ");
+  }
+
+  const senderName = currentUserProfile?.nev || 'Vezetőség';
+  const subject = `Hiányzó munkaidő rögzítés - ${workerName}`;
+  const daysSummary = missingData.days.map(d => `- ${d.date}: rögzítve ${d.hours} óra (elvárt: ${d.required} óra)`).join('\n');
+  const bodyText = `Szia ${workerName}!\n\nKérlek pótold a hiányzó óráidat az alábbi napokon:\n${daysSummary}\n\nÜdvözlettel,\n${senderName}`;
+  
+  const htmlBodyText = buildReminderEmailHtml(workerName, missingData.days);
+
+  setGlobalLoading(true, "Emlékeztető küldése...");
+
+  try {
+    await sendAutomatedEmail(workerEmail, subject, bodyText, htmlBodyText);
+    
+    // 2. Központi Supabase frissítés: elmentjük a mai dátumot a dolgozó profiljához
+    const { error: updateErr } = await supabaseClient
+      .from('profiles')
+      .update({ last_reminder_date: todayLocal })
+      .ilike('email', emailCleanKey);
+
+    if (updateErr) {
+      console.warn("Nem sikerült elmenteni az emlékeztető dátumát az adatbázisban:", updateErr.message);
+    }
+
+    // 3. Lokális állapot frissítése
+    missingData.lastReminderDate = todayLocal;
+
+    // 4. Gomb azonnali inaktiválása a felületen
+    if (btnElement) {
+      btnElement.disabled = true;
+      btnElement.className = 'btn btn-sm btn-outline-secondary text-muted';
+      btnElement.innerHTML = '<i class="bi bi-check2"></i>';
+      btnElement.title = 'Mai napra már elküldve egy vezető által';
+    }
+
+    setGlobalLoading(false);
+    showModal(`Az emlékeztető e-mail sikeresen elküldve <strong>${workerName}</strong> részére!`, "Siker");
+  } catch (err) {
+    setGlobalLoading(false);
+    showModal("Hiba az e-mail küldésekor: " + err.message, "Hiba");
+  }
+}
+
+async function executeSendAllReminders() {
+  closeModal();
+  setGlobalLoading(true, "Emlékeztetők küldése...");
+
+  const emailKeys = Object.keys(lastMissingReportForEmail);
+  let successCount = 0;
+  let skipCount = 0;
+  const sentEmails = [];
+
+  const now = new Date();
+  const todayLocal = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+
+  try {
+    for (const key of emailKeys) {
+      const item = lastMissingReportForEmail[key];
+      if (item && item.email && item.days && item.days.length > 0) {
+        
+        // 1. Ha az adatbázis szerint ma már kapott emlékeztetőt, kihagyjuk
+        if (item.lastReminderDate === todayLocal) {
+          skipCount++;
+          continue;
+        }
+
+        const senderName = currentUserProfile?.nev || 'Vezetőség';
+        const subject = `Hiányzó munkaidő rögzítés - ${item.name}`;
+        const daysSummary = item.days.map(d => `- ${d.date}: rögzítve ${d.hours} óra (elvárt: ${d.required} óra)`).join('\n');
+        const bodyText = `Szia ${item.name}!\n\nKérlek pótold a hiányzó óráidat az alábbi napokon:\n${daysSummary}\n\nÜdvözlettel,\n${senderName}`;
+        
+        const htmlBodyText = buildReminderEmailHtml(item.name, item.days);
+
+        await sendAutomatedEmail(item.email, subject, bodyText, htmlBodyText);
+        
+        // 2. Mentjük a listába a sikereseket a központi DB frissítéshez
+        item.lastReminderDate = todayLocal;
+        sentEmails.push(cleanEmail(item.email));
+        successCount++;
+
+        // 3. Gomb inaktiválása a felületen, hogy a küldés után vizuálisan is látszódjon a szűrés
+        const btn = document.querySelector(`button[data-email="${escapeHtml(item.email)}"]`);
+        if (btn) {
+          btn.disabled = true;
+          btn.className = 'btn btn-sm btn-outline-secondary text-muted';
+          btn.innerHTML = '<i class="bi bi-check2"></i>';
+          btn.title = 'Mai napra már elküldve egy vezető által';
+        }
+      }
+    }
+
+    // 4. Központi Supabase frissítés mindenkinek, akinek sikeresen kiment a levél
+    if (sentEmails.length > 0) {
+      const { error: batchUpdateErr } = await supabaseClient
+        .from('profiles')
+        .update({ last_reminder_date: todayLocal })
+        .in('email', sentEmails);
+
+      if (batchUpdateErr) {
+        console.warn("Nem sikerült elmenteni az emlékeztető dátumokat az adatbázisban:", batchUpdateErr.message);
+      }
+    }
+
+    setGlobalLoading(false);
+    let resultMsg = `Sikeresen elküldve <strong>${successCount} db</strong> emlékeztető e-mail!`;
+    if (skipCount > 0) {
+      resultMsg += `<br><br><small class="text-muted">(${skipCount} munkatársnak ma már kiment az értesítő egy vezető által, így ők automatikusan ki lettek hagyva.)</small>`;
+    }
+    showModal(resultMsg, "Siker");
+  } catch (err) {
+    setGlobalLoading(false);
+    showModal("Hiba történt a tömeges küldés során: " + err.message, "Hiba");
+  }
+}
 
   async function sendAllReminders() {
     const emailKeys = Object.keys(lastMissingReportForEmail);
@@ -3663,36 +3783,7 @@ function safeSetGlobalLoading(isLoading, message) {
     }
   }
 
-  async function executeSendAllReminders() {
-    closeModal();
-    setGlobalLoading(true, "Emlékeztetők küldése...");
 
-    const emailKeys = Object.keys(lastMissingReportForEmail);
-    let successCount = 0;
-
-    try {
-      for (const key of emailKeys) {
-        const item = lastMissingReportForEmail[key];
-        if (item && item.email && item.days && item.days.length > 0) {
-          const senderName = currentUserProfile?.nev || 'Vezetőség';
-          const subject = `Hiányzó munkaidő rögzítés - ${item.name}`;
-          const daysSummary = item.days.map(d => `- ${d.date}: rögzítve ${d.hours} óra (elvárt: ${d.required} óra)`).join('\n');
-          const bodyText = `Szia ${item.name}!\n\nKérlek pótold a hiányzó óráidat az alábbi napokon:\n${daysSummary}\n\nÜdvözlettel,\n${senderName}`;
-          
-          const htmlBodyText = buildReminderEmailHtml(item.name, item.days);
-
-          await sendAutomatedEmail(item.email, subject, bodyText, htmlBodyText);
-          successCount++;
-        }
-      }
-
-      setGlobalLoading(false);
-      showModal(`Sikeresen elküldve <strong>${successCount} db</strong> emlékeztető e-mail!`, "Siker");
-    } catch (err) {
-      setGlobalLoading(false);
-      showModal("Hiba történt a tömeges küldés során: " + err.message, "Hiba");
-    }
-  }
 
   function hideMissingRecords() {
     const area = document.getElementById('missingAlertArea');
@@ -3702,77 +3793,84 @@ function safeSetGlobalLoading(isLoading, message) {
   }
 
   async function loadPendingRequests() {
-    try {
-      const leaderTbody = document.getElementById('leaderRequestTableBody');
-      const adminTbody = document.getElementById('requestTableBody');
+  try {
+    const leaderTbody = document.getElementById('leaderRequestTableBody');
+    const adminTbody = document.getElementById('requestTableBody');
 
-      const userEmail = cleanEmail(currentUserProfile?.email);
-      const rawRole = (currentUserProfile?.jogosultsag || currentUserProfile?.role || 'user').toLowerCase().trim();
-      const isAdmin = rawRole.includes('admin') || rawRole.includes('boss');
+    const userEmail = cleanEmail(currentUserProfile?.email);
+    const rawRole = (currentUserProfile?.jogosultsag || currentUserProfile?.role || 'user').toLowerCase().trim();
+    const isAdmin = rawRole.includes('admin') || rawRole.includes('boss');
 
-      if (leaderTbody) {
-        const { data: leaderReqs, error: lErr } = await supabaseClient
-          .from('requests')
-          .select('*')
-          .eq('approver_email', userEmail)
-          .eq('status', 'pending_level1')
-          .order('created_at', { ascending: false });
+    if (leaderTbody) {
+      const { data: leaderReqs, error: lErr } = await supabaseClient
+        .from('requests')
+        .select('*')
+        .eq('approver_email', userEmail)
+        .eq('status', 'pending_level1')
+        .order('created_at', { ascending: false });
 
-        if (lErr) throw lErr;
+      if (lErr) throw lErr;
 
-        if (!leaderReqs || leaderReqs.length === 0) {
-          leaderTbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted p-3">Nincs jóváhagyásra váró beosztotti kérelem.</td></tr>';
-        } else {
-          leaderTbody.innerHTML = leaderReqs.map(r => `
-            <tr id="req-row-${r.id}">
-              <td data-label="Név"><strong>${escapeHtml(r.nev || r.user_email)}</strong></td>
-              <td data-label="Dátum"><span class="badge bg-info text-dark">${escapeHtml(r.datum)}</span></td>
-              <td data-label="Indok"><em>"${escapeHtml(r.indoklas || '')}"</em></td>
-              <td data-label="Művelet" class="text-center">
-                <button class="btn btn-sm btn-outline-primary fw-bold py-0" onclick="openApprovalModal('${r.id}')"><i class="bi bi-pencil me-1"></i> Elbírálás</button>
-              </td>
-            </tr>
-          `).join('');
-        }
+      if (!leaderReqs || leaderReqs.length === 0) {
+        leaderTbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted p-3">Nincs jóváhagyásra váró beosztotti kérelem.</td></tr>';
+      } else {
+        leaderTbody.innerHTML = leaderReqs.map(r => `
+          <tr id="req-row-${r.id}">
+            <td data-label="Név"><strong>${escapeHtml(r.nev || r.user_email)}</strong></td>
+            <td data-label="Dátum"><span class="badge bg-info text-dark">${escapeHtml(r.datum)}</span></td>
+            <td data-label="Indok"><em>"${escapeHtml(r.indoklas || '')}"</em></td>
+            <td data-label="Művelet" class="text-center">
+              <button class="btn btn-sm btn-outline-primary fw-bold py-0" onclick="openApprovalModal('${r.id}')">
+                <i class="bi bi-pencil me-1"></i> Elbírálás
+              </button>
+            </td>
+          </tr>
+        `).join('');
       }
+    }
 
-      if (adminTbody && isAdmin) {
-        const { data: adminReqs, error: aErr } = await supabaseClient
-          .from('requests')
-          .select('*')
-          .in('status', ['pending_admin', 'pending', 'Függőben'])
-          .order('created_at', { ascending: false });
+    if (adminTbody && isAdmin) {
+      const { data: adminReqs, error: aErr } = await supabaseClient
+        .from('requests')
+        .select('*')
+        .in('status', ['pending_admin', 'pending', 'Függőben'])
+        .order('created_at', { ascending: false });
 
-        if (aErr) throw aErr;
+      if (aErr) throw aErr;
 
-        if (!adminReqs || adminReqs.length === 0) {
-          adminTbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted p-3">Nincs adminisztrátori véglegesítésre váró kérelem.</td></tr>';
-        } else {
-          adminTbody.innerHTML = adminReqs.map(r => {
-            const leaderComment = (r.approver_comment || '').trim();
-            const leaderBlock = leaderComment 
-              ? `<div class="mt-1"><span class="badge bg-warning text-dark">Felettesi bejegyzés: ${escapeHtml(leaderComment)}</span></div>`
-              : ``;
+      if (!adminReqs || adminReqs.length === 0) {
+        adminTbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted p-3">Nincs adminisztrátori véglegesítésre váró kérelem.</td></tr>';
+      } else {
+        adminTbody.innerHTML = adminReqs.map(r => {
+          const leaderComment = (r.approver_comment || '').trim();
+          const leaderBlock = leaderComment 
+            ? `<div class="mt-1"><span class="badge bg-warning text-dark">Felettesi bejegyzés: ${escapeHtml(leaderComment)}</span></div>`
+            : ``;
 
-            return `
+          return `
             <tr id="req-row-${r.id}">
-              <td data-label="Név"><strong>${escapeHtml(r.nev || r.user_email)}</strong></td>
+              <td data-label="Név">
+                <strong>${escapeHtml(r.nev || r.user_email)}</strong>
+              </td>
               <td data-label="Dátum"><span class="badge bg-info text-dark">${escapeHtml(r.datum)}</span></td>
               <td data-label="Indok">
                 <div><strong>Kérelmező:</strong> "${escapeHtml(r.indoklas || '')}"</div>
                 ${leaderBlock}
               </td>
               <td data-label="Művelet" class="text-center">
-                <button class="btn btn-sm btn-outline-primary fw-bold py-0" onclick="openApprovalModal('${r.id}')"><i class="bi bi-pencil me-1"></i> Véglegesítés</button>
+                <button class="btn btn-sm btn-outline-primary fw-bold py-0" onclick="openApprovalModal('${r.id}')">
+                  <i class="bi bi-pencil me-1"></i> Véglegesítés
+                </button>
               </td>
             </tr>
-          `}).join('');
-        }
+          `;
+        }).join('');
       }
-    } catch (err) {
-      console.error("Hiba a kérelmek betöltésekor:", err);
     }
+  } catch (err) {
+    console.error("Hiba a kérelmek betöltésekor:", err);
   }
+}
 
   function runApproveAllRequests() {
     showModal("Válaszd ki, milyen státusszal szeretnéd véglegesíteni az <strong>ÖSSZES</strong> adminra váró kérelmet:", "Tömeges véglegesítés");
@@ -3791,166 +3889,231 @@ function safeSetGlobalLoading(isLoading, message) {
   }
 
   async function executeApproveAll(mode) {
-    closeModal();
-    safeSetGlobalLoading(true, `Összes kérelem jóváhagyása (${mode})...`);
+  closeModal();
+  safeSetGlobalLoading(true, `Összes kérelem jóváhagyása (${mode})...`);
 
-    try {
-      const { data: pendingReqs, error: fetchErr } = await supabaseClient
-        .from('requests')
-        .select('*')
-        .or('status.eq.pending_admin,status.eq.pending_level1,status.eq.pending,status.eq.Függőben,status.eq.Adminra vár');
+  try {
+    const { data: pendingReqs, error: fetchErr } = await supabaseClient
+      .from('requests')
+      .select('*')
+      .or('status.eq.pending_admin,status.eq.pending_level1,status.eq.pending,status.eq.Függőben,status.eq.Adminra vár');
 
-      if (fetchErr) throw fetchErr;
+    if (fetchErr) throw fetchErr;
 
-      if (!pendingReqs || pendingReqs.length === 0) {
-        safeSetGlobalLoading(false);
-        return showModal("Jelenleg nincs jóváhagyásra váró kérelem.", "Információ");
-      }
+    if (!pendingReqs || pendingReqs.length === 0) {
+      safeSetGlobalLoading(false);
+      return showModal("Jelenleg nincs jóváhagyásra váró kérelem.", "Információ");
+    }
 
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-      const approvedAt = new Date().toISOString();
-      const pendingIds = pendingReqs.map(r => r.id);
-      
-      const modeText = mode === 'Büntetéses' ? '[BÜNTETÉSES NYITÁS]' : '[BÜNTETLEN NYITÁS]';
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const approvedAt = new Date().toISOString();
+    
+    // 🎯 AZ ÉPPEN BEJELENTKEZETT ADMIN NEVÉNEK BEHÚZÁSA
+    const adminName = currentUserProfile?.nev || currentUserProfile?.email || 'Adminisztrátor';
+    const modeText = mode === 'Büntetéses' ? '[BÜNTETÉSES NYITÁS]' : '[BÜNTETLEN NYITÁS]';
 
-      const { error: updateErr } = await supabaseClient
+    // Egyenként mentjük, így nem törlődik a felettes korábbi jóváhagyása sem
+    const updatePromises = pendingReqs.map(req => {
+      const existingComment = (req.approver_comment || '').trim();
+      const adminCommentPart = `${adminName} (Tömeges): ${modeText} - Tömeges adminisztrátori jóváhagyás`;
+      const finalComment = existingComment ? `${existingComment} | ${adminCommentPart}` : adminCommentPart;
+
+      return supabaseClient
         .from('requests')
         .update({ 
           status: 'approved', 
-          approver_comment: `Tömeges adminisztrátori jóváhagyás - ${modeText}`,
+          approver_comment: finalComment,
           expires_at: expiresAt, 
           approved_at: approvedAt 
         })
-        .in('id', pendingIds);
+        .eq('id', req.id);
+    });
 
-      if (updateErr) throw updateErr;
+    const results = await Promise.all(updatePromises);
+    const hasError = results.find(r => r.error);
+    if (hasError) throw hasError.error;
 
-      for (const req of pendingReqs) {
-        const targetEmail = req.user_email || req.email;
-        const targetName = req.nev || req.name || 'Munkatárs';
-        const reqDate = req.datum || req.date;
+    for (const req of pendingReqs) {
+      const targetEmail = req.user_email || req.email;
+      const targetName = req.nev || req.name || 'Munkatárs';
+      const reqDate = req.datum || req.date;
 
-        const subject = `Pótlási kérelem elfogadva - ${reqDate}`;
-        const body = `Szia ${targetName}!\n\nA(z) ${reqDate} napra vonatkozó pótlási kérelmedet az Adminisztrátor véglegesen jóváhagyta.\nA nap 24 órára megnyílt a rögzítéshez!`;
-        
-        sendAutomatedEmail(targetEmail, subject, body);
-      }
-
-      safeSetGlobalLoading(false);
-      showModal(`Sikeresen jóváhagyva <strong>${pendingReqs.length} db</strong> kérelem (${modeText})!`, "Siker");
-      if (typeof loadPendingRequests === "function") await loadPendingRequests();
-
-    } catch (err) {
-      safeSetGlobalLoading(false);
-      showModal("Hiba történt a jóváhagyás során: " + err.message, "Hiba");
-    }
-  }
-
-  async function exportRequestsToCsv() {
-    const btn = document.getElementById('exportRequestsBtn');
-    const monthInput = document.getElementById('exportRequestsMonth');
-    const monthVal = monthInput ? monthInput.value : "";
-
-    if (!monthVal) return showModal("Kérlek, válassz ki egy hónapot az exportáláshoz!", "Hiba");
-
-    if (btn) btn.disabled = true;
-    safeSetGlobalLoading(true, "Kérelmek betöltése...");
-
-    try {
-      const startDateStr = `${monthVal}-01`;
-      const [yr, mo] = monthVal.split('-');
-      const lastDay = new Date(parseInt(yr), parseInt(mo), 0).getDate();
-      const endDateStr = `${monthVal}-${String(lastDay).padStart(2, '0')}`;
-
-      const { data: reqs, error } = await supabaseClient
-        .from('requests')
-        .select('*')
-        .gte('datum', startDateStr)
-        .lte('datum', endDateStr)
-        .order('datum', { ascending: true });
-
-      if (error) throw error;
-
-      if (!reqs || reqs.length === 0) {
-        safeSetGlobalLoading(false);
-        return showModal(`A(z) ${monthVal} hónapra nincsenek rögzített kérelmek.`, "Információ");
-      }
-
-      const header = [
-        "Kérelmező neve", 
-        "E-mail", 
-        "Érintett nap", 
-        "Igényelt óra", 
-        "Munkaszám", 
-        "Dolgozói indoklás", 
-        "Státusz", 
-        "Típus (Büntetéses/Büntetlen)", 
-        "Döntéshozó", 
-        "Felettesi / Admin megjegyzés", 
-        "Beküldés ideje", 
-        "Elbírálás ideje"
-      ];
+      const subject = `Pótlási kérelem elfogadva - ${reqDate}`;
+      const body = `Szia ${targetName}!\n\nA(z) ${reqDate} napra vonatkozó pótlási kérelmedet az Adminisztrátor (${adminName}) véglegesen jóváhagyta.\nA nap 24 órára megnyílt a rögzítéshez!`;
       
-      let csvContent = "\uFEFF" + header.join(";") + "\r\n";
-
-      reqs.forEach(r => {
-        const nev = r.nev || r.user_email || "";
-        const email = r.user_email || "";
-        const datum = r.datum || "";
-        const oraszam = (Number(r.oraszam) || 0).toString().replace('.', ',');
-        const munkaszam = r.munkaszam || "";
-        const indoklas = r.indoklas || "";
-
-        const rawStatus = String(r.status).toLowerCase();
-        let statusLabel = rawStatus;
-        if (rawStatus === 'approved') statusLabel = 'Jóváhagyva';
-        else if (rawStatus === 'rejected') statusLabel = 'Elutasítva';
-        else if (rawStatus.includes('pending') || rawStatus.includes('fugg')) statusLabel = 'Függőben';
-
-        const comment = r.approver_comment || "";
-        let type = "Normál / Ismeretlen";
-        if (comment.includes('[BÜNTETÉSES NYITÁS]')) type = "BÜNTETÉSES";
-        else if (comment.includes('[BÜNTETLEN NYITÁS]')) type = "BÜNTETLEN";
-
-        let approver = r.approver_email || "";
-        let pureComment = comment;
-        
-        if (comment.includes(':')) {
-          approver = comment.split(':')[0].trim();
-          pureComment = comment.substring(comment.indexOf(':') + 1).trim();
-          pureComment = pureComment.replace('[BÜNTETÉSES NYITÁS]', '').replace('[BÜNTETLEN NYITÁS]', '').replace('Jóváhagyva', '').replace('-', '').trim();
-        }
-
-        const createdAt = r.created_at ? new Date(r.created_at).toLocaleString('hu-HU') : "";
-        let actedAt = "";
-        if (r.approved_at) actedAt = new Date(r.approved_at).toLocaleString('hu-HU');
-        else if (r.rejected_at) actedAt = new Date(r.rejected_at).toLocaleString('hu-HU');
-
-        const rowValues = [
-          nev, email, datum, oraszam, munkaszam, indoklas, 
-          statusLabel, type, approver, pureComment, createdAt, actedAt
-        ];
-
-        let rowEscaped = rowValues.map(v => '"' + String(v || '').replace(/"/g, '""') + '"');
-        csvContent += rowEscaped.join(";") + "\r\n";
-      });
-
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement("a");
-      link.setAttribute("href", URL.createObjectURL(blob));
-      link.setAttribute("download", `Spice_Nyitasok_Riport_${monthVal}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-    } catch (err) {
-      showModal("Hiba az exportálás során: " + err.message, "Hiba");
-    } finally {
-      safeSetGlobalLoading(false);
-      if (btn) btn.disabled = false;
+      sendAutomatedEmail(targetEmail, subject, body);
     }
+
+    safeSetGlobalLoading(false);
+    showModal(`Sikeresen jóváhagyva <strong>${pendingReqs.length} db</strong> kérelem (${modeText})!`, "Siker");
+    if (typeof loadPendingRequests === "function") await loadPendingRequests();
+
+  } catch (err) {
+    safeSetGlobalLoading(false);
+    showModal("Hiba történt a jóváhagyás során: " + err.message, "Hiba");
   }
+}
+
+async function exportRequestsToCsv() {
+  const btn = document.getElementById('exportRequestsBtn');
+  const monthInput = document.getElementById('exportRequestsMonth');
+  const monthVal = monthInput ? monthInput.value : "";
+
+  if (!monthVal) return showModal("Kérlek, válassz ki egy hónapot az exportáláshoz!", "Hiba");
+
+  if (btn) btn.disabled = true;
+  safeSetGlobalLoading(true, "Kérelmek betöltése...");
+
+  try {
+    const startDateStr = `${monthVal}-01`;
+    const [yr, mo] = monthVal.split('-');
+    const lastDay = new Date(parseInt(yr), parseInt(mo), 0).getDate();
+    const endDateStr = `${monthVal}-${String(lastDay).padStart(2, '0')}`;
+
+    const { data: reqs, error } = await supabaseClient
+      .from('requests')
+      .select('*')
+      .gte('datum', startDateStr)
+      .lte('datum', endDateStr)
+      .order('datum', { ascending: true });
+
+    if (error) throw error;
+
+    if (!reqs || reqs.length === 0) {
+      safeSetGlobalLoading(false);
+      return showModal(`A(z) ${monthVal} hónapra nincsenek rögzített kérelmek.`, "Információ");
+    }
+
+    const header = [
+      "Kérelmező neve", 
+      "E-mail", 
+      "Érintett nap", 
+      "Igényelt óra", 
+      "Munkaszám", 
+      "Dolgozói indoklás", 
+      "Státusz", 
+      "Típus (Büntetéses/Büntetlen)", 
+      "Adminisztrátor", 
+      "Admin megjegyzés", 
+      "Admin nyitás időpontja", 
+      "Felettes", 
+      "Felettes megjegyzés", 
+      "Felettes jóváhagyás időpontja", 
+      "Beküldés ideje"
+    ];
+    
+    let csvContent = "\uFEFF" + header.join(";") + "\r\n";
+
+    // 🎯 NÉV ÉS MEGJEGYZÉS SZÉTVÁLASZTÁSA (TÖMEGES ÉS EGYÉNI JÓVÁHAGYÁSOKRA IS)
+    const parseCommentPart = (partStr) => {
+      if (!partStr) return { name: '', text: '' };
+      
+      const colonIdx = partStr.indexOf(':');
+
+      // Régi formátumú, kettőspont nélküli tömeges jóváhagyások kezelése
+      if (colonIdx === -1) {
+        if (partStr.includes('Tömeges')) {
+          return { name: 'Adminisztrátor (Tömeges)', text: 'Tömeges adminisztrátori jóváhagyás' };
+        }
+        return { name: '', text: partStr.replace(/\[.*?\]/g, '').trim() };
+      }
+
+      const name = partStr.substring(0, colonIdx).trim();
+      let rawText = partStr.substring(colonIdx + 1).trim();
+
+      const cleanText = rawText
+        .replace(/\[.*?\]/g, '')
+        .replace(/\bJóváhagyva\b/g, '')
+        .replace(/\bElutasítva\b/g, '')
+        .replace(/^[\s\-–—:]+/, '')
+        .trim();
+
+      return { name, text: cleanText };
+    };
+
+    reqs.forEach(r => {
+      const nev = r.nev || r.user_email || "";
+      const email = r.user_email || "";
+      const datum = r.datum || "";
+      const oraszam = (Number(r.oraszam) || 0).toString().replace('.', ',');
+      const munkaszam = r.munkaszam || "";
+      const indoklas = r.indoklas || "";
+
+      const rawStatus = String(r.status || '').toLowerCase();
+      let statusLabel = rawStatus;
+      if (rawStatus === 'approved') statusLabel = 'Jóváhagyva';
+      else if (rawStatus === 'rejected') statusLabel = 'Elutasítva';
+      else if (rawStatus.includes('pending') || rawStatus.includes('fugg')) statusLabel = 'Függőben';
+
+      const comment = (r.approver_comment || '').trim();
+      let type = "Normál / Ismeretlen";
+      if (comment.includes('[BÜNTETÉSES NYITÁS]')) type = "BÜNTETÉSES";
+      else if (comment.includes('[BÜNTETLEN NYITÁS]')) type = "BÜNTETLEN";
+
+      // Komment blokkok szétbontása Felettesre és Adminra a ' | ' mentén
+      const parts = comment ? comment.split(' | ').map(p => p.trim()) : [];
+      let leaderPart = '';
+      let adminPart = '';
+
+      if (parts.length === 1) {
+        const isDefinitelyAdmin = parts[0].includes('[BÜNTETÉSES NYITÁS]') || 
+                                  parts[0].includes('[BÜNTETLEN NYITÁS]') || 
+                                  parts[0].includes('Tömeges') || 
+                                  rawStatus === 'approved';
+        if (isDefinitelyAdmin) {
+          adminPart = parts[0];
+        } else {
+          leaderPart = parts[0];
+        }
+      } else if (parts.length >= 2) {
+        leaderPart = parts[0];
+        adminPart = parts[parts.length - 1];
+      }
+
+      const leaderData = parseCommentPart(leaderPart);
+      const adminData = parseCommentPart(adminPart);
+
+      const adminName = adminData.name;
+      let adminComment = adminData.text;
+      const adminOpenTime = r.approved_at ? new Date(r.approved_at).toLocaleString('hu-HU') : "";
+
+      const leaderName = leaderData.name;
+      const leaderComment = leaderData.text;
+      const leaderApprovalTime = r.leader_approved_at ? new Date(r.leader_approved_at).toLocaleString('hu-HU') : "";
+
+      // Ha tömeges nyitás történt, de a szöveg üres maradt volna
+      if (adminName.includes('(Tömeges)') && !adminComment) {
+        adminComment = "Tömeges adminisztrátori jóváhagyás";
+      }
+
+      const createdAt = r.created_at ? new Date(r.created_at).toLocaleString('hu-HU') : "";
+
+      const rowValues = [
+        nev, email, datum, oraszam, munkaszam, indoklas, 
+        statusLabel, type, adminName, adminComment, adminOpenTime, 
+        leaderName, leaderComment, leaderApprovalTime, createdAt
+      ];
+
+      let rowEscaped = rowValues.map(v => '"' + String(v || '').replace(/"/g, '""') + '"');
+      csvContent += rowEscaped.join(";") + "\r\n";
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    link.setAttribute("href", URL.createObjectURL(blob));
+    link.setAttribute("download", `Spice_Nyitasok_Riport_${monthVal}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+  } catch (err) {
+    showModal("Hiba az exportálás során: " + err.message, "Hiba");
+  } finally {
+    safeSetGlobalLoading(false);
+    if (btn) btn.disabled = false;
+  }
+}
 
   async function lockMonthAction(m) {
     try {
@@ -4322,11 +4485,11 @@ function getNextApproverEmail(profile) {
   const mgr = typeof cleanEmail === 'function' ? cleanEmail(profile.manager_email) : String(profile.manager_email || '').toLowerCase().trim();
   const boss = typeof cleanEmail === 'function' ? cleanEmail(profile.boss_email) : String(profile.boss_email || '').toLowerCase().trim();
 
-  // 🎯 Kreatív csapat tagjainak azonosítása
+  // Kreatív csapat ellenőrzése
   const isCreative = typeof isCreativeTeamUser === 'function' && isCreativeTeamUser(profile);
 
   if (role === 'user') {
-    // Kreatív dolgozó esetén átugorjuk a csoportvezetőt (csv) -> közvetlenül a Leader kapja!
+    // Ha kreatív csapat tagja, átugorjuk a csoportvezetőt (csv) -> közvetlenül a Leader kapja:
     if (isCreative) {
       return ldr || mgr || adminEmail;
     }
@@ -4374,80 +4537,79 @@ function getNextApproverEmail(profile) {
   }
 
   async function submitLateRequest(targetDate, jobNumber, hoursVal) {
-    const monthVal = targetDate.substring(0, 7);
+  const monthVal = targetDate.substring(0, 7);
 
-    if (isMonthLocked(monthVal)) {
-      return showModal(`A(z) <strong>${monthVal}</strong> hónap le van zárva az Adminisztráció által!`, "Lezárt hónap");
-    }
+  if (isMonthLocked(monthVal)) {
+    return showModal(`A(z) <strong>${monthVal}</strong> hónap le van zárva az Adminisztráció által!`, "Lezárt hónap");
+  }
 
-    const reasonEl = document.getElementById('requestReasonInput');
-    const reason = reasonEl ? reasonEl.value.trim() : "";
+  const reasonEl = document.getElementById('requestReasonInput');
+  const reason = reasonEl ? reasonEl.value.trim() : "";
 
-    if (!reason) return alert("Kérlek, add meg a rögzítés elmaradásának indokát!");
+  if (!reason) return alert("Kérlek, add meg a rögzítés elmaradásának indokát!");
 
-    const safeHours = (!isNaN(Number(hoursVal))) ? Number(hoursVal) : 0;
-    const safeJobNumber = jobNumber || "";
+  const safeHours = (!isNaN(Number(hoursVal))) ? Number(hoursVal) : 0;
+  const safeJobNumber = jobNumber || "";
 
-    try {
-      // DELEGÁLÁS: Döntéshozó dinamikus felülbírálása (helyetteshez irányítás, ha a felettes szabadságon van)
-      const baseApprover = getNextApproverEmail(currentUserProfile);
-      const nextApprover = typeof getEffectiveApproverEmail === 'function' 
-        ? await getEffectiveApproverEmail(baseApprover) 
-        : baseApprover;
+  try {
+    // DELEGÁLÁS: Döntéshozó dinamikus felülbírálása (helyetteshez irányítás, ha a felettes szabadságon van)
+    const baseApprover = getNextApproverEmail(currentUserProfile);
+    const nextApprover = typeof getEffectiveApproverEmail === 'function' 
+      ? await getEffectiveApproverEmail(baseApprover) 
+      : baseApprover;
 
-      const isDirectAdmin = (nextApprover === 'admin.oranyilvantartas@spicecommunication.hu');
-      
-      const initialStatus = isDirectAdmin ? 'pending_admin' : 'pending_level1';
+    const isDirectAdmin = (nextApprover === 'admin.oranyilvantartas@spicecommunication.hu');
+    const initialStatus = isDirectAdmin ? 'pending_admin' : 'pending_level1';
 
-      const { data: insertedData, error } = await supabaseClient
-        .from('requests')
-        .insert([{
-          user_email: currentUserProfile.email,
-          nev: currentUserProfile.nev,
-          pozicio: currentUserProfile.pozicio || "",
-          datum: targetDate,
-          munkaszam: safeJobNumber,
-          oraszam: safeHours,
-          indoklas: reason,
-          approver_email: nextApprover,
-          status: initialStatus
-        }])
-        .select();
+    const { data: insertedData, error } = await supabaseClient
+      .from('requests')
+      .insert([{
+        user_email: currentUserProfile.email,
+        nev: currentUserProfile.nev,
+        pozicio: currentUserProfile.pozicio || "",
+        datum: targetDate,
+        munkaszam: safeJobNumber,
+        oraszam: safeHours,
+        indoklas: reason,
+        approver_email: nextApprover,
+        status: initialStatus
+      }])
+      .select();
 
-      if (error) throw error;
+    if (error) throw error;
 
-      const reqId = (insertedData && insertedData.length > 0) ? insertedData[0].id : '';
+    const reqId = (insertedData && insertedData.length > 0) ? insertedData[0].id : '';
 
-      showModal("Pótlási kérelem sikeresen rögzítve! Értesítés elküldve a felettesnek.", "Siker");
+    showModal("Pótlási kérelem sikeresen rögzítve! Értesítés elküldve a felettesnek.", "Siker");
 
-      const baseUrl = window.location.origin + window.location.pathname;
-      const directApprovalUrl = `${baseUrl}?tab=approvals&reqId=${reqId}`;
+    const baseUrl = window.location.origin + window.location.pathname;
+    const directApprovalUrl = `${baseUrl}?tab=approvals&reqId=${reqId}`;
 
-      const subject = `Pótlási kérelem jóváhagyás - ${currentUserProfile.nev}`;
-      const bodyText = `Szia!\n\n${currentUserProfile.nev} pótlási kérelmet nyújtott be a(z) ${targetDate} napra.\nIndoklás: "${reason}"\n\nJóváhagyáshoz kattints ide: ${directApprovalUrl}`;
+    const subject = `Pótlási kérelem jóváhagyás - ${currentUserProfile.nev}`;
+    const bodyText = `Szia!\n\n${currentUserProfile.nev} pótlási kérelmet nyújtott be a(z) ${targetDate} napra.\nIndoklás: "${reason}"\n\nJóváhagyáshoz kattints ide: ${directApprovalUrl}`;
 
-      const htmlBodyText = `
-        <div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-          <h3 style="color: #363636; margin-top: 0; font-size: 16px;">Pótlási kérelem érkezett</h3>
-          <p style="font-size: 14px; color: #4a4a4a;"><strong>${escapeHtml(currentUserProfile.nev)}</strong> pótlási kérelmet nyújtott be a(z) <strong>${targetDate}</strong> napra.</p>
-          
-          <div style="background-color: #f5f5f5; padding: 12px; border-left: 4px solid #485fc7; margin: 15px 0; font-style: italic; font-size: 13px; color: #333333;">
-            "${escapeHtml(reason)}"
-          </div>
-
-          <p style="font-size: 13px; color: #555555; margin-bottom: 20px;">Kérlek, kattints az alábbi gombra a kérelem felülvizsgálatához és elbírálásához:</p>
-
-          <a href="${directApprovalUrl}" target="_blank" style="background-color: #485fc7; color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block;">
-            Megnyitás a Jóváhagyó Felületen
-          </a>
+    const htmlBodyText = `
+      <div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+        <h3 style="color: #363636; margin-top: 0; font-size: 16px;">Pótlási kérelem érkezett</h3>
+        <p style="font-size: 14px; color: #4a4a4a;"><strong>${escapeHtml(currentUserProfile.nev)}</strong> pótlási kérelmet nyújtott be a(z) <strong>${targetDate}</strong> napra.</p>
+        
+        <div style="background-color: #f5f5f5; padding: 12px; border-left: 4px solid #485fc7; margin: 15px 0; font-style: italic; font-size: 13px; color: #333333;">
+          "${escapeHtml(reason)}"
         </div>
-      `;
 
-      sendAutomatedEmail(nextApprover, subject, bodyText, htmlBodyText);
+        <p style="font-size: 13px; color: #555555; margin-bottom: 20px;">Kérlek, kattints az alábbi gombra a kérelem felülvizsgálatához és elbírálásához:</p>
 
-    } catch (err) {
-      showModal("Hiba a kérelem beküldésekor: " + err.message, "Hiba");
-    }
+        <a href="${directApprovalUrl}" target="_blank" style="background-color: #485fc7; color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block;">
+          Megnyitás a Jóváhagyó Felületen
+        </a>
+      </div>
+    `;
+
+    sendAutomatedEmail(nextApprover, subject, bodyText, htmlBodyText);
+
+  } catch (err) {
+    showModal("Hiba a kérelem beküldésekor: " + err.message, "Hiba");
+  }
 }
 
   async function handleUrlParameters() {
@@ -4473,192 +4635,195 @@ function getNextApproverEmail(profile) {
   }
 
   async function openApprovalModal(requestId) {
-    try {
-      const { data: req, error } = await supabaseClient
-        .from('requests')
-        .select('*')
-        .eq('id', requestId)
-        .single();
+  try {
+    const { data: req, error } = await supabaseClient
+      .from('requests')
+      .select('*')
+      .eq('id', requestId)
+      .single();
 
-      if (error || !req) return showModal("A kérelem nem található vagy már le lett zárva.", "Figyelmeztetés");
+    if (error || !req) return showModal("A kérelem nem található vagy már le lett zárva.", "Figyelmeztetés");
 
-      const approverCommentBlock = req.approver_comment ? `
-        <div class="alert alert-warning p-2 mb-3 small">
-          <strong>Korábbi felettesi megjegyzés(ek):</strong><br>
-          <em>"${escapeHtml(req.approver_comment)}"</em>
+    const approverCommentBlock = req.approver_comment ? `
+      <div class="alert alert-warning p-2 mb-3 small">
+        <strong>Korábbi felettesi megjegyzés(ek):</strong><br>
+        <em>"${escapeHtml(req.approver_comment)}"</em>
+      </div>
+    ` : '';
+
+    const modalHtml = `
+      <div>
+        <p class="mb-1"><strong>Kérelmező:</strong> ${escapeHtml(req.nev || req.user_email)}</p>
+        <p class="mb-1"><strong>Dátum:</strong> <span class="badge bg-info text-dark"><strong>${escapeHtml(req.datum)}</strong></span></p>
+        <p class="mb-3"><strong>Munkaszám:</strong> ${escapeHtml(req.munkaszam)} (${req.oraszam} óra)</p>
+        
+        <div class="alert alert-light border p-2 mb-3 small">
+          <strong>Kérelmező indoklása:</strong><br>
+          <em>"${escapeHtml(req.indoklas || 'Nincs megadva')}"</em>
         </div>
-      ` : '';
 
-      const modalHtml = `
-        <div>
-          <p class="mb-1"><strong>Kérelmező:</strong> ${escapeHtml(req.nev || req.user_email)}</p>
-          <p class="mb-1"><strong>Dátum:</strong> <span class="badge bg-info text-dark"><strong>${escapeHtml(req.datum)}</strong></span></p>
-          <p class="mb-3"><strong>Munkaszám:</strong> ${escapeHtml(req.munkaszam)} (${req.oraszam} óra)</p>
-          
-          <div class="alert alert-light border p-2 mb-3 small">
-            <strong>Kérelmező indoklása:</strong><br>
-            <em>"${escapeHtml(req.indoklas || 'Nincs megadva')}"</em>
-          </div>
+        ${approverCommentBlock}
 
-          ${approverCommentBlock}
-
-          <div class="mb-2">
-            <label class="form-label small fw-bold" for="activeApproverComment">Saját megjegyzés / indoklás (opcionális):</label>
-            <textarea id="activeApproverComment" class="form-control form-control-sm" rows="3" placeholder="Írd le a jóváhagyási vagy elutasítási indokot..."></textarea>
-          </div>
+        <div class="mb-2">
+          <label class="form-label small fw-bold" for="activeApproverComment">Saját megjegyzés / indoklás (opcionális):</label>
+          <textarea id="activeApproverComment" class="form-control form-control-sm" rows="3" placeholder="Írd le a jóváhagyási vagy elutasítási indokot..."></textarea>
         </div>
-      `;
+      </div>
+    `;
 
-      showModal(modalHtml, "Pótlási kérelem elbírálása");
+    showModal(modalHtml, "Pótlási kérelem elbírálása");
 
-      const footer = document.getElementById('modalFooter');
-      
-      const rawRole = (currentUserProfile?.jogosultsag || currentUserProfile?.role || 'user').toLowerCase().trim();
-      const isAdmin = rawRole.includes('admin') || rawRole.includes('boss');
-      const st = String(req.status).toLowerCase();
-      const isAdminPhase = st.includes('pending_admin') || st.includes('függőben') || st === 'pending';
+    const footer = document.getElementById('modalFooter');
+    
+    const rawRole = (currentUserProfile?.jogosultsag || currentUserProfile?.role || 'user').toLowerCase().trim();
+    const isAdmin = rawRole.includes('admin') || rawRole.includes('boss');
+    const st = String(req.status || '').toLowerCase();
+    const isAdminPhase = st.includes('pending_admin') || st.includes('függőben') || st === 'pending';
 
-      if (footer) {
-        if (isAdmin && isAdminPhase) {
-          footer.innerHTML = `
-            <button class="btn btn-warning btn-sm fw-bold me-1 text-dark" onclick="processApproval('${req.id}', 'approve_penalty')">
-              <i class="bi bi-exclamation-triangle me-1"></i> Büntetéses nyitás
-            </button>
-            <button class="btn btn-success btn-sm fw-bold me-1" onclick="processApproval('${req.id}', 'approve_no_penalty')">
-              <i class="bi bi-check-circle me-1"></i> Büntetlen nyitás
-            </button>
-            <button class="btn btn-danger btn-sm fw-bold me-1" onclick="processApproval('${req.id}', 'reject')">
-              <i class="bi bi-x me-1"></i> Elutasítás
-            </button>
-            <button class="btn btn-sm btn-secondary mt-1 mt-md-0" onclick="closeModal()">Mégse</button>
-          `;
-        } else {
-          footer.innerHTML = `
-            <button class="btn btn-success btn-sm fw-bold me-1" onclick="processApproval('${req.id}', 'approve')">
-              <i class="bi bi-check me-1"></i> Jóváhagyás
-            </button>
-            <button class="btn btn-danger btn-sm fw-bold me-1" onclick="processApproval('${req.id}', 'reject')">
-              <i class="bi bi-x me-1"></i> Elutasítás
-            </button>
-            <button class="btn btn-sm btn-secondary" onclick="closeModal()">Mégse</button>
-          `;
-        }
+    if (footer) {
+      if (isAdmin && isAdminPhase) {
+        footer.innerHTML = `
+          <button class="btn btn-warning btn-sm fw-bold me-1 text-dark shadow-sm" onclick="processApproval('${req.id}', 'approve_penalty')">
+            <i class="bi bi-exclamation-triangle me-1"></i> Büntetéses nyitás
+          </button>
+          <button class="btn btn-success btn-sm fw-bold me-1 shadow-sm" onclick="processApproval('${req.id}', 'approve_no_penalty')">
+            <i class="bi bi-check-circle me-1"></i> Büntetlen nyitás
+          </button>
+          <button class="btn btn-danger btn-sm fw-bold me-1 shadow-sm" onclick="processApproval('${req.id}', 'reject')">
+            <i class="bi bi-x me-1"></i> Elutasítás
+          </button>
+          <button class="btn btn-sm btn-secondary mt-1 mt-md-0" onclick="closeModal()">Mégse</button>
+        `;
+      } else {
+        footer.innerHTML = `
+          <button class="btn btn-success btn-sm fw-bold me-1 shadow-sm" onclick="processApproval('${req.id}', 'approve')">
+            <i class="bi bi-check me-1"></i> Jóváhagyás
+          </button>
+          <button class="btn btn-danger btn-sm fw-bold me-1 shadow-sm" onclick="processApproval('${req.id}', 'reject')">
+            <i class="bi bi-x me-1"></i> Elutasítás
+          </button>
+          <button class="btn btn-sm btn-secondary" onclick="closeModal()">Mégse</button>
+        `;
       }
-    } catch (err) {
-      showModal("Hiba a kérelem betöltésekor: " + err.message, "Hiba");
     }
+  } catch (err) {
+    showModal("Hiba a kérelem betöltésekor: " + err.message, "Hiba");
   }
+}
 
-  async function processApproval(requestId, action) {
-    const commentEl = document.getElementById('activeApproverComment') || document.querySelector('#customModal textarea');
-    const newComment = commentEl ? commentEl.value.trim() : "";
+async function processApproval(requestId, action) {
+  const commentEl = document.getElementById('activeApproverComment') || document.querySelector('#customModal textarea');
+  const newComment = commentEl ? commentEl.value.trim() : "";
 
-    try {
-      const { data: req, error: fetchErr } = await supabaseClient
+  try {
+    const { data: req, error: fetchErr } = await supabaseClient
+      .from('requests')
+      .select('*')
+      .eq('id', requestId)
+      .single();
+
+    if (fetchErr || !req) throw new Error("A kérelem nem található!");
+
+    const rawRole = (currentUserProfile?.jogosultsag || currentUserProfile?.role || 'user').toLowerCase().trim();
+    const isAdmin = rawRole.includes('admin') || rawRole.includes('boss');
+    const approverName = currentUserProfile?.nev || currentUserProfile?.email || 'Felettes';
+
+    let defaultText = 'Jóváhagyva';
+    if (action === 'reject') defaultText = 'Elutasítva';
+    else if (action === 'approve_penalty') defaultText = '[BÜNTETÉSES NYITÁS]';
+    else if (action === 'approve_no_penalty') defaultText = '[BÜNTETLEN NYITÁS]';
+
+    const commentToAdd = newComment ? `${approverName}: ${defaultText} - ${newComment}` : `${approverName}: ${defaultText}`;
+    let existingComment = (req.approver_comment || '').trim();
+    let finalComment = existingComment ? `${existingComment} | ${commentToAdd}` : commentToAdd;
+
+    if (action === 'reject') {
+      const { error } = await supabaseClient
         .from('requests')
-        .select('*')
-        .eq('id', requestId)
-        .single();
+        .update({
+          status: 'rejected',
+          approver_comment: finalComment,
+          rejected_at: new Date().toISOString()
+        })
+        .eq('id', requestId);
 
-      if (fetchErr || !req) throw new Error("A kérelem nem található!");
+      if (error) throw error;
 
-      const rawRole = (currentUserProfile?.jogosultsag || currentUserProfile?.role || 'user').toLowerCase().trim();
-      const isAdmin = rawRole.includes('admin') || rawRole.includes('boss');
-      const approverName = currentUserProfile?.nev || currentUserProfile?.email || 'Felettes';
+      closeModal();
+      showModal("Kérelem elutasítva.", "Tájékoztatás");
 
-      let defaultText = 'Jóváhagyva';
-      if (action === 'reject') defaultText = 'Elutasítva';
-      else if (action === 'approve_penalty') defaultText = '[BÜNTETÉSES NYITÁS]';
-      else if (action === 'approve_no_penalty') defaultText = '[BÜNTETLEN NYITÁS]';
+      const subject = `Pótlási kérelem elutasítva - ${req.datum}`;
+      const bodyText = `Szia ${req.nev}!\n\nA(z) ${req.datum} napra benyújtott pótlási kérelmedet elutasították.\nMegjegyzés: "${finalComment}"`;
+      const htmlBodyText = `
+        <div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+          <h3 style="color: #dc2626; margin-top: 0; font-size: 16px;">Kérelem elutasítva</h3>
+          <p style="font-size: 14px; color: #4a4a4a;">Szia <strong>${escapeHtml(req.nev)}</strong>!</p>
+          <p style="font-size: 14px; color: #4a4a4a;">A(z) <strong>${req.datum}</strong> napra vonatkozó pótlási kérelmedet sajnos elutasították.</p>
+          <div style="background-color: #fffdfd; padding: 12px; border-left: 4px solid #dc2626; margin: 15px 0; font-style: italic; font-size: 13px; color: #333333;">"Megjegyzés: ${escapeHtml(finalComment)}"</div>
+        </div>`;
 
-      const commentToAdd = newComment ? `${approverName}: ${defaultText} - ${newComment}` : `${approverName}: ${defaultText}`;
+      sendAutomatedEmail(req.user_email, subject, bodyText, htmlBodyText);
 
-      let existingComment = (req.approver_comment || '').trim();
-      let finalComment = existingComment ? `${existingComment} | ${commentToAdd}` : commentToAdd;
-
-      if (action === 'reject') {
+    } else {
+      if (isAdmin) {
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
         const { error } = await supabaseClient
           .from('requests')
           .update({
-            status: 'rejected',
+            status: 'approved',
             approver_comment: finalComment,
-            rejected_at: new Date().toISOString()
+            expires_at: expiresAt,
+            approved_at: new Date().toISOString()
           })
           .eq('id', requestId);
 
         if (error) throw error;
 
         closeModal();
-        showModal("Kérelem elutasítva.", "Tájékoztatás");
+        showModal(`A(z) ${req.datum} nap megnyitva 24 órára ${req.nev} részére!`, "Siker");
 
-        const subject = `Pótlási kérelem elutasítva - ${req.datum}`;
-        const bodyText = `Szia ${req.nev}!\n\nA(z) ${req.datum} napra benyújtott pótlási kérelmedet elutasították.\nMegjegyzés: "${finalComment}"`;
-        const htmlBodyText = `<div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-          <h3 style="color: #dc2626; margin-top: 0; font-size: 16px;">Kérelem elutasítva</h3>
-          <p style="font-size: 14px; color: #4a4a4a;">Szia <strong>${escapeHtml(req.nev)}</strong>!</p>
-          <p style="font-size: 14px; color: #4a4a4a;">A(z) <strong>${req.datum}</strong> napra vonatkozó pótlási kérelmedet sajnos elutasították.</p>
-          <div style="background-color: #fffdfd; padding: 12px; border-left: 4px solid #dc2626; margin: 15px 0; font-style: italic; font-size: 13px; color: #333333;">"Megjegyzés: ${escapeHtml(finalComment)}"</div>
-        </div>`;
-        sendAutomatedEmail(req.user_email, subject, bodyText, htmlBodyText);
+        const cleanDisplayComment = finalComment
+          .replace('[BÜNTETÉSES NYITÁS]', '')
+          .replace('[BÜNTETLEN NYITÁS]', '')
+          .replace(/\s+/g, ' ')
+          .trim();
 
-      } else {
-        if (isAdmin) {
-          const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-          const { error } = await supabaseClient
-            .from('requests')
-            .update({
-              status: 'approved',
-              approver_comment: finalComment,
-              expires_at: expiresAt,
-              approved_at: new Date().toISOString()
-            })
-            .eq('id', requestId);
-
-          if (error) throw error;
-
-          closeModal();
-          showModal(`A(z) ${req.datum} nap megnyitva 24 órára ${req.nev} részére!`, "Siker");
-
-          const cleanDisplayComment = finalComment
-            .replace('[BÜNTETÉSES NYITÁS]', '')
-            .replace('[BÜNTETLEN NYITÁS]', '')
-            .replace(/\s+/g, ' ')
-            .trim();
-
-          const subject = `Pótlási kérelem elfogadva - ${req.datum}`;
-          const bodyText = `Szia ${req.nev}!\n\nA(z) ${req.datum} napra vonatkozó pótlási kérelmedet véglegesen jóváhagytuk.\nA nap 24 órára megnyílt a rögzítéshez!`;
-          const htmlBodyText = `<div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+        const subject = `Pótlási kérelem elfogadva - ${req.datum}`;
+        const bodyText = `Szia ${req.nev}!\n\nA(z) ${req.datum} napra vonatkozó pótlási kérelmedet véglegesen jóváhagytuk.\nA nap 24 órára megnyílt a rögzítéshez!`;
+        const htmlBodyText = `
+          <div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
             <h3 style="color: #16a34a; margin-top: 0; font-size: 16px;">Kérelem jóváhagyva 🔓</h3>
             <p style="font-size: 14px; color: #4a4a4a;">Szia <strong>${escapeHtml(req.nev)}</strong>!</p>
             <p style="font-size: 14px; color: #4a4a4a;">A(z) <strong>${req.datum}</strong> napra vonatkozó pótlási kérelmedet véglegesen jóváhagytuk. A nap 24 órára megnyílt a rögzítéshez.</p>
             ${cleanDisplayComment ? `<div style="background-color: #f8fafc; padding: 12px; border-left: 4px solid #16a34a; margin: 15px 0; font-style: italic; font-size: 13px; color: #333333;">"Megjegyzés: ${escapeHtml(cleanDisplayComment)}"</div>` : ''}
           </div>`;
-          
-          sendAutomatedEmail(req.user_email, subject, bodyText, htmlBodyText);
+        
+        sendAutomatedEmail(req.user_email, subject, bodyText, htmlBodyText);
 
-        } else {
-          // 🎯 DUPLA ADMIN E-MAIL CÍM BEÁLLÍTÁSA
-          const adminEmails = 'admin.oranyilvantartas@spicecommunication.hu, sipos.gabor@spicecommunication.hu';
+      } else {
+        const adminEmails = 'admin.oranyilvantartas@spicecommunication.hu, sipos.gabor@spicecommunication.hu';
 
-          const { error } = await supabaseClient
-            .from('requests')
-            .update({
-              status: 'pending_admin',
-              approver_comment: finalComment,
-              approver_email: adminEmails
-            })
-            .eq('id', requestId);
+        const { error } = await supabaseClient
+          .from('requests')
+          .update({
+            status: 'pending_admin',
+            approver_comment: finalComment,
+            approver_email: adminEmails,
+            leader_approved_at: new Date().toISOString()
+          })
+          .eq('id', requestId);
 
-          if (error) throw error;
+        if (error) throw error;
 
-          closeModal();
-          showModal("Kérelem felettesként jóváhagyva! Továbbítva az Adminisztrátornak véglegesítésre.", "Siker");
+        closeModal();
+        showModal("Kérelem felettesként jóváhagyva! Továbbítva az Adminisztrátornak véglegesítésre.", "Siker");
 
-          const baseUrl = window.location.origin + window.location.pathname;
-          const directApprovalUrl = `${baseUrl}?tab=admin&reqId=${req.id}`;
-          const subject = `Pótlási kérelem adminisztrátori jóváhagyásra - ${req.nev}`;
-          const bodyText = `Szia Admin!\n\n${req.nev} pótlási kérelmét a felettese (${approverName}) jóváhagyta (${req.datum}).\nFelettes megjegyzése: "${finalComment}"\nKérlek nyisd meg a napot az Admin felületen!`;
-          const htmlBodyText = `<div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+        const baseUrl = window.location.origin + window.location.pathname;
+        const directApprovalUrl = `${baseUrl}?tab=admin&reqId=${req.id}`;
+        const subject = `Pótlási kérelem adminisztrátori jóváhagyásra - ${req.nev}`;
+        const bodyText = `Szia Admin!\n\n${req.nev} pótlási kérelmét a felettese (${approverName}) jóváhagyta (${req.datum}).\nFelettes megjegyzése: "${finalComment}"\nKérlek nyisd meg a napot az Admin felületen!`;
+        const htmlBodyText = `
+          <div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
             <h3 style="color: #363636; margin-top: 0; font-size: 16px;">Jóváhagyásra váró kérelem</h3>
             <p style="font-size: 14px; color: #4a4a4a;"><strong>${escapeHtml(req.nev)}</strong> pótlási kérelmét a felettese (<strong>${escapeHtml(approverName)}</strong>) jóváhagyta a(z) <strong>${req.datum}</strong> napra.</p>
             <div style="background-color: #f0f8ff; padding: 12px; border-left: 4px solid #3273dc; margin: 10px 0; font-size: 13px;">
@@ -4671,16 +4836,15 @@ function getNextApproverEmail(profile) {
             <a href="${directApprovalUrl}" target="_blank" style="background-color: #485fc7; color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 13px; display: inline-block;">Megnyitás az Admin Felületen</a>
           </div>`;
 
-          // 🎯 ÉRTESÍTÉS KÜLDÉSE MINDKÉT E-MAIL CÍMRE
-          sendAutomatedEmail(adminEmails, subject, bodyText, htmlBodyText);
-        }
+        sendAutomatedEmail(adminEmails, subject, bodyText, htmlBodyText);
       }
-
-      if (typeof loadPendingRequests === "function") await loadPendingRequests();
-
-    } catch (err) {
-      showModal("Hiba az elbírálás során: " + err.message, "Hiba");
     }
+
+    if (typeof loadPendingRequests === "function") await loadPendingRequests();
+
+  } catch (err) {
+    showModal("Hiba az elbírálás során: " + err.message, "Hiba");
+  }
 }
 
   async function sendAutomatedEmail(toEmail, subject, bodyText, htmlBodyText) {
