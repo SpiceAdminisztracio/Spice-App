@@ -4665,6 +4665,11 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  const cleanHolidays = (typeof holidayDates !== 'undefined' && Array.isArray(holidayDates)) ? holidayDates : [];
+  const cleanShiftedWorkdays = (typeof shiftedWorkdays !== 'undefined' && Array.isArray(shiftedWorkdays)) 
+    ? shiftedWorkdays 
+    : ['2026-08-08']; 
+
   const dailyLogsMap = {};
 
   // 1. WORK_LOGS FELDOLGOZÁSA
@@ -4708,7 +4713,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
     }
   });
 
-  // 🎯 2. TÁVOLLÉTEK (SZABADSÁG ÉS CSÚSZTATÁS) BEÉPÍTÉSE A NAPI ALAPBA
+  // 2. TÁVOLLÉTEK (SZABADSÁG ÉS CSÚSZTATÁS) BEÉPÍTÉSE - KIZÁRÓLAG MUNKANAPOKRA!
   (leaveRequests || []).forEach(r => {
     const reqEmail = normalizeStr(r.user_email || '');
     if (reqEmail !== targetEmail) return;
@@ -4718,7 +4723,6 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
     if (!isApproved) return;
 
     const t = normalizeStr(r.tipus || r.jelleg || '');
-    // Home office és ügyfél nem biztosít plusz munkaidő-fedezetet
     if (t.includes('home') || t.includes('office') || t === 'ho' || t.includes('ugyfel') || t === 'u') return;
 
     let startStr = r.kezdo_datum ? String(r.kezdo_datum).substring(0, 10).replace(/\./g, '-').replace(/\//g, '-') : '';
@@ -4750,7 +4754,6 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
         }
       }
     } else {
-      // Teljes napos fizetett szabadság / betegszabadság = 8 óra fedezet
       leaveHrs = standardDailyLimit;
     }
 
@@ -4763,7 +4766,13 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
       const d = String(curr.getDate()).padStart(2, '0');
       const dStr = `${y}-${m}-${d}`;
 
-      if (dStr >= CUTOFF_DATE) {
+      const dayOfWeek = curr.getDay();
+      const isShiftedWorkday = cleanShiftedWorkdays.includes(dStr);
+      const isWeekendDay = (dayOfWeek === 0 || dayOfWeek === 6) && !isShiftedWorkday;
+      const isHoliday = cleanHolidays.includes(dStr);
+
+      // 🎯 CSAK TÉNYLEGES MUNKANAPRA SZÁMOLUNK TÁVOLLÉTI FEDEZETET (Hétvégére / ünnepnapra NEM!)
+      if (!isWeekendDay && !isHoliday && dStr >= CUTOFF_DATE) {
         if (!dailyLogsMap[dStr]) {
           dailyLogsMap[dStr] = {
             datum: dStr,
@@ -4785,11 +4794,6 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
   let expiredOvertimes = [];
   let lejartTulora = 0;
 
-  const cleanHolidays = (typeof holidayDates !== 'undefined' && Array.isArray(holidayDates)) ? holidayDates : [];
-  const cleanShiftedWorkdays = (typeof shiftedWorkdays !== 'undefined' && Array.isArray(shiftedWorkdays)) 
-    ? shiftedWorkdays 
-    : ['2026-08-08']; 
-
   Object.values(dailyLogsMap).forEach(dayObj => {
     const entryDate = new Date(dayObj.datum + 'T12:00:00');
     const dayOfWeek = entryDate.getDay();
@@ -4801,7 +4805,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
     const diffDays = Math.floor((today - entryDate) / (1000 * 60 * 60 * 24));
     const isExpired = diffDays > 45;
 
-    // 1. ÉJSZAKAI ÓRÁK
+    // 1. Éjszakai órák
     if (dayObj.nightHours > 0) {
       if (isExpired) {
         lejartTulora += dayObj.nightHours;
@@ -4811,21 +4815,32 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
       }
     }
 
-    // 2. HÉTVÉGI / RENDEZVÉNY ÓRÁK
-    let totalWeekendHrs = dayObj.weekendHours;
-    if (totalWeekendHrs > 0) {
+    // 2. Hétvégi / rendezvény órák
+    if (dayObj.weekendHours > 0) {
       if (isExpired) {
-        lejartTulora += totalWeekendHrs;
-        expiredOvertimes.push({ datum: entryDate, orak: totalWeekendHrs });
+        lejartTulora += dayObj.weekendHours;
+        expiredOvertimes.push({ datum: entryDate, orak: dayObj.weekendHours });
       } else {
-        weekendOvertimes.push({ datum: entryDate, orak: totalWeekendHrs });
+        weekendOvertimes.push({ datum: entryDate, orak: dayObj.weekendHours });
       }
     }
 
-    // 🎯 3. HÉTKOZNAPI TÚLMUNKA ÓRÁK (MUNKA + TÁVOLLÉT EGYÜTTESEN)
-    const dailyLimit = (isWeekendDay || isHoliday) ? 0 : standardDailyLimit;
-    const totalDaytime = (dayObj.daytimeHours || 0) + (dayObj.leaveHours || 0);
-    const weekdayOvertimeHrs = Math.max(0, totalDaytime - dailyLimit);
+    // 3. Hétköznapi túlmunka órák
+    let weekdayOvertimeHrs = 0;
+
+    // 🎯 TÚLMUNKA CSAK AKKOR KELETKEZHET, HA A DOLGOZÓ TÉNYLEGESEN DOLGOZOTT IS AZNAP!
+    if (dayObj.daytimeHours > 0) {
+      if (isWeekendDay || isHoliday) {
+        // Hétvégén vagy ünnepnapon minden ledolgozott nappali óra túlmunka
+        weekdayOvertimeHrs = dayObj.daytimeHours;
+      } else {
+        // Munkanapon: ha van szabadság (8 óra), az elvárt munkaidő 0 órára csökken,
+        // így a ledolgozott órák teljes egészében túlmunkává válnak.
+        // Ha részleges csúsztatás volt (pl. 4 óra), az elvárt munka 4 órára csökken.
+        const effectiveDailyLimit = Math.max(0, standardDailyLimit - (dayObj.leaveHours || 0));
+        weekdayOvertimeHrs = Math.max(0, dayObj.daytimeHours - effectiveDailyLimit);
+      }
+    }
 
     if (weekdayOvertimeHrs > 0) {
       if (isExpired) {
