@@ -1948,7 +1948,7 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary btn-sm fw-bold" data-bs-dismiss="modal">Mégse</button>
         <button type="button" class="btn btn-warning btn-sm fw-bold text-dark" onclick="submitSpecialHORequest()">
-          <i class="bi bi-send me-1"></i> Kérelem Beküldése HR-nek
+          <i class="bi bi-send me-1"></i> Kérelem Beküldése
         </button>
       </div>
     </div>
@@ -3251,6 +3251,172 @@ function buildCreativeOpinionEmailHtml(dolgozoNeve, tipus, kezdoDatum, vegDatum,
   }
 }
 
+async function submitSpecialHORequest() {
+  // 1. DÁTUMOK KIOLVASÁSA (a háttérben lévő fő űrlap mezőiből)
+  const startDateEl = 
+    document.getElementById('specialHoStartDate') ||
+    document.getElementById('startDate') ||
+    document.getElementById('kezdoDatum') ||
+    document.getElementById('kezdo_datum') ||
+    document.getElementById('datum') ||
+    document.querySelector('input[name="startDate"]') ||
+    document.querySelector('input[name="kezdo_datum"]');
+
+  const endDateEl = 
+    document.getElementById('specialHoEndDate') ||
+    document.getElementById('endDate') ||
+    document.getElementById('vegDatum') ||
+    document.getElementById('veg_datum') ||
+    document.querySelector('input[name="endDate"]') ||
+    document.querySelector('input[name="veg_datum"]');
+
+  const rangeEl = document.getElementById('dateRange') || document.getElementById('dates');
+
+  let startDate = startDateEl ? startDateEl.value : '';
+  let endDate = endDateEl ? endDateEl.value : '';
+
+  if (!startDate && rangeEl && rangeEl.value) {
+    const parts = rangeEl.value.split(' - ');
+    startDate = parts[0] ? parts[0].trim() : '';
+    endDate = parts[1] ? parts[1].trim() : startDate;
+  }
+
+  if (!endDate) endDate = startDate;
+
+  // 2. INDOKLÁS KIOLVASÁSA (közvetlenül a felugró modal szövegdobozából)
+  const activeModal = document.querySelector('.modal.show') || document.getElementById('specialHoModal');
+  const reasonEl = 
+    (activeModal ? activeModal.querySelector('textarea') : null) ||
+    document.getElementById('specialHoReason') ||
+    document.getElementById('hoReason') ||
+    document.getElementById('modalReason') ||
+    document.querySelector('textarea[name="reason"]');
+
+  const reason = reasonEl ? reasonEl.value.trim() : '';
+
+  // 3. VALIDÁCIÓ
+  if (!startDate) {
+    return showToast("Kérlek, válaszd ki a Home Office dátumát a fő űrlapon!", "bg-warning");
+  }
+
+  if (!reason) {
+    return showToast("A kereten felüli Home Office igényléséhez kötelező megadni az indoklást!", "bg-warning");
+  }
+
+  if (endDate < startDate) {
+    return showToast("A végdátum nem lehet korábbi a kezdődátumnál!", "bg-danger");
+  }
+
+  if (typeof safeSetGlobalLoading === 'function') {
+    safeSetGlobalLoading(true, "Kérelem beküldése...");
+  } else if (typeof setGlobalLoading === 'function') {
+    setGlobalLoading(true, "Kérelem beküldése...");
+  }
+
+  try {
+    const user = window.currentUserProfile || currentUserProfile || {};
+    const userEmail = typeof cleanEmail === 'function' ? cleanEmail(user.email) : String(user.email || '').toLowerCase().trim();
+    const userName = user.nev || userEmail;
+
+    // 4. FELETTES MEGHATÁROZÁSA (Kreatívoknál közvetlenül a Leadert veszi)
+    const baseApprover = typeof getNextApproverEmail === 'function' 
+      ? getNextApproverEmail(user) 
+      : (user.leader_email || user.csoportvezeto_email || 'admin.oranyilvantartas@spicecommunication.hu');
+
+    const nextApprover = typeof getEffectiveApproverEmail === 'function' 
+      ? await getEffectiveApproverEmail(baseApprover) 
+      : baseApprover;
+
+    // Nincs automatikus jóváhagyás adminoknak sem: mindig jóváhagyásra megy, mint a rendes szabadság
+    const initialStatus = 'pending_level1';
+
+    // 5. MENTÉS A LEAVE_REQUESTS TÁBLÁBA (megjegyzes mezővel és pending státusszal)
+    const { data: insertedData, error } = await supabaseClient
+      .from('leave_requests')
+      .insert([{
+        user_email: userEmail,
+        nev: userName,
+        tipus: 'Home Office (kereten felüli)',
+        kezdo_datum: startDate,
+        veg_datum: endDate,
+        megjegyzes: reason,
+        status: initialStatus,
+        approver_email: nextApprover,
+        created_at: new Date().toISOString()
+      }])
+      .select();
+
+    if (error) throw error;
+
+    const reqId = (insertedData && insertedData.length > 0) ? insertedData[0].id : '';
+
+    // 6. FELUGRÓ MODAL BEZÁRÁSA ÉS ŰRLAP ALAPHELYZETBE ÁLLÍTÁSA
+    if (activeModal && window.bootstrap && bootstrap.Modal) {
+      const modalInstance = bootstrap.Modal.getInstance(activeModal);
+      if (modalInstance) modalInstance.hide();
+    } else if (typeof closeModal === 'function') {
+      closeModal();
+    }
+
+    if (reasonEl) reasonEl.value = '';
+    
+    showToast("Kereten felüli Home Office kérelem elküldve a felettesnek jóváhagyásra!", "bg-success");
+
+    // 7. E-MAIL ÉRTESÍTŐ KIKÜLDÉSE A FELETTESNEK
+    if (nextApprover && typeof sendAutomatedEmail === 'function') {
+      const baseUrl = window.location.origin + window.location.pathname;
+      const approvalUrl = `${baseUrl}?tab=approvals&reqId=${reqId}`;
+      const dateDisplay = (startDate === endDate) ? startDate : `${startDate} – ${endDate}`;
+
+      const subject = `🏠 Kereten felüli Home Office kérelem - ${userName}`;
+      const bodyText = `Szia!\n\n${userName} kereten felüli Home Office kérelmet nyújtott be az alábbi időszakra:\n${dateDisplay}\n\nIndoklás: "${reason}"\n\nJóváhagyáshoz kattints ide: ${approvalUrl}`;
+
+      const htmlBodyText = `
+        <div style="font-family: Arial, sans-serif; max-width: 520px; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #ffffff;">
+          <h3 style="color: #1e293b; margin-top: 0; font-size: 17px; border-bottom: 2px solid #3b82f6; padding-bottom: 8px;">
+            🏠 Kereten felüli Home Office kérelem
+          </h3>
+          <p style="font-size: 14px; color: #334155;">
+            <strong>${typeof escapeHtml === 'function' ? escapeHtml(userName) : userName}</strong> a keretén felüli Home Office jóváhagyását kéri.
+          </p>
+          <table style="width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 13px;">
+            <tr>
+              <td style="padding: 8px; background-color: #f8fafc; font-weight: bold; width: 35%; border: 1px solid #e2e8f0;">Időszak:</td>
+              <td style="padding: 8px; border: 1px solid #e2e8f0;">${dateDisplay}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; background-color: #f8fafc; font-weight: bold; vertical-align: top; border: 1px solid #e2e8f0;">Indoklás:</td>
+              <td style="padding: 8px; border: 1px solid #e2e8f0; font-style: italic; color: #0f172a;">"${typeof escapeHtml === 'function' ? escapeHtml(reason) : reason}"</td>
+            </tr>
+          </table>
+          <div style="text-align: center; margin-top: 20px;">
+            <a href="${approvalUrl}" target="_blank" style="background-color: #2563eb; color: #ffffff; padding: 10px 22px; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 13px; display: inline-block;">
+              Kérelem elbírálása a Felületen
+            </a>
+          </div>
+        </div>
+      `;
+
+      sendAutomatedEmail(nextApprover, subject, bodyText, htmlBodyText);
+    }
+
+    // 8. OLDAL ÉS TÁBLÁZATOK FRISSÍTÉSE
+    if (typeof loadMyRequests === 'function') await loadMyRequests();
+    if (typeof loadTeamCalendar === 'function') await loadTeamCalendar();
+    if (typeof updateDashboard === 'function') await updateDashboard();
+
+  } catch (err) {
+    console.error("Hiba az extra HO beküldésekor:", err);
+    showToast("Hiba történt a kérelem beküldése során: " + err.message, "bg-danger");
+  } finally {
+    if (typeof safeSetGlobalLoading === 'function') {
+      safeSetGlobalLoading(false);
+    } else if (typeof setGlobalLoading === 'function') {
+      setGlobalLoading(false);
+    }
+  }
+}
+
   async function loadPendingApprovals() {
     if (!currentUserProfile) return;
 
@@ -4135,7 +4301,7 @@ function renderGlobalTimeline(data) {
 
     let badges = '';
 
-    // 🎯 Kigyűjtjük a naphoz tartozó összes érvényes (nem törölt) kérelmet
+    // Kigyűjtjük a naphoz tartozó érvényes kérelmeket
     const dayReqs = userRequestsCache.filter(req => {
       const st = String(req.status || '').toLowerCase();
       const isCancelledOrRejected = ['visszavonva', 'visszavont', 'rejected', 'elutasitva', 'elutasítva', 'cancelled'].includes(st);
@@ -4144,21 +4310,42 @@ function renderGlobalTimeline(data) {
       return !isCancelledOrRejected && dateStr >= req.kezdo_datum && dateStr <= reqEnd;
     });
 
-    // Ha van kérelem az adott napon (akár több is)
     if (dayReqs.length > 0) {
       dayReqs.forEach(req => {
         const rawType = (req.tipus || '').trim();
-        const config = ABSENCE_RENDER_MAP[rawType] || { 
-          short: rawType ? rawType.substring(0, 2).toUpperCase() : 'SZ', 
-          bg: '#84cc16', 
-          text: '#1a4731' 
-        };
+        const lowerType = rawType.toLowerCase();
+
+        let config;
+
+        // 🎯 1. KIZÁRÓLAG A KERETEN FELÜLI HO KAP ELTÉRŐ SZÍNT (Narancssárga / HO+)
+        if (lowerType.includes('kereten felüli') || lowerType.includes('extra ho')) {
+          config = { 
+            short: 'HO+', 
+            bg: '#f97316',   // Figyelmeztető narancssárga
+            text: '#ffffff' 
+          };
+        } 
+        // 🎯 2. A SZABÁLYOS HO MARAD A MEGSZOKOTT NORMÁL ZÖLD SZÍN (nem tér el a többitől)
+        else if (lowerType.includes('home office') || lowerType.includes('ho')) {
+          config = { 
+            short: 'HO', 
+            bg: '#84cc16',   // A megszokott naptári zöld
+            text: '#1a4731' 
+          };
+        } 
+        // 3. Egyéb típusok az ABSENCE_RENDER_MAP alapján vagy alapértelmezetten
+        else {
+          config = ABSENCE_RENDER_MAP[rawType] || { 
+            short: rawType ? rawType.substring(0, 2).toUpperCase() : 'SZ', 
+            bg: '#84cc16', 
+            text: '#1a4731' 
+          };
+        }
 
         const isPending = ['pending_level1', 'pending_admin', 'pending_creative_review', 'Függőben'].includes(req.status);
         const pendingStyle = isPending ? 'border: 1.5px dashed #ffc107; font-style: italic;' : '';
         const pendingIndicator = isPending ? ' ⏳' : '';
 
-        // 🎯 IDŐINTERVALLUM HOZZÁADÁSA A TOOLTIPHEZ (Súgószöveg)
         let timeStr = 'Egész napos';
         if (req.kezdo_ido && req.veg_ido) {
           timeStr = `${req.kezdo_ido} - ${req.veg_ido}`;
@@ -4190,7 +4377,6 @@ function renderGlobalTimeline(data) {
 
   container.innerHTML = calendarHTML;
 }
-
 
   // ELEMHASZNÁLATI ÉS POPULÁCIÓS SKÁLA: PONTOS JOGOSULTSÁG LISTA
 const NON_USER_ROLES = ['csoportvezeto', 'leader', 'manager', 'boss', 'admin'];
