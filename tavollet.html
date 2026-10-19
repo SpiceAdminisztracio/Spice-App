@@ -4642,7 +4642,6 @@ function filterTeamBalancesByGroup() {
 
 function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, overtimeDecisions, initialHours = 0, dailyWorkLimit = 8) {
   let remainingInitial = Number(initialHours) || 0;
-  // 🎯 DINAMIKUS MUNKAIDŐ KERET (ha nincs megadva, alapértelmezetten 8 óra)
   const standardDailyLimit = Number(dailyWorkLimit) || 8;
 
   if (!userEmail) {
@@ -4668,7 +4667,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
 
   const dailyLogsMap = {};
 
-  // 🎯 WORK_LOGS FELDOLGOZÁSA (KIZÁRÓLAG user_email HASZNÁLATÁVAL)
+  // 1. WORK_LOGS FELDOLGOZÁSA
   (overtimeLogs || []).forEach(o => {
     let rawDate = '';
     if (o.datum) {
@@ -4678,7 +4677,6 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
       rawDate = String(o.date).substring(0, 10).replace(/\./g, '-').replace(/\//g, '-');
     }
     
-    // 2026-10-01 előtti tételek figyelmen kívül hagyása
     if (!rawDate || rawDate < CUTOFF_DATE) return; 
 
     const logEmail = normalizeStr(o.user_email || '');
@@ -4688,6 +4686,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
         dailyLogsMap[rawDate] = {
           datum: rawDate,
           daytimeHours: 0,
+          leaveHours: 0,
           nightHours: 0,
           weekendHours: 0
         };
@@ -4706,6 +4705,77 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
       } else {
         dailyLogsMap[rawDate].daytimeHours += rawHours;
       }
+    }
+  });
+
+  // 🎯 2. TÁVOLLÉTEK (SZABADSÁG ÉS CSÚSZTATÁS) BEÉPÍTÉSE A NAPI ALAPBA
+  (leaveRequests || []).forEach(r => {
+    const reqEmail = normalizeStr(r.user_email || '');
+    if (reqEmail !== targetEmail) return;
+
+    const rawStatus = normalizeStr(r.status || r.statusz || r.allapot);
+    const isApproved = (rawStatus === 'approved' || rawStatus.includes('jovahagy') || rawStatus === 'elfogadva');
+    if (!isApproved) return;
+
+    const t = normalizeStr(r.tipus || r.jelleg || '');
+    // Home office és ügyfél nem biztosít plusz munkaidő-fedezetet
+    if (t.includes('home') || t.includes('office') || t === 'ho' || t.includes('ugyfel') || t === 'u') return;
+
+    let startStr = r.kezdo_datum ? String(r.kezdo_datum).substring(0, 10).replace(/\./g, '-').replace(/\//g, '-') : '';
+    let endStr = r.veg_datum ? String(r.veg_datum).substring(0, 10).replace(/\./g, '-').replace(/\//g, '-') : startStr;
+    if (!startStr) return;
+    if (startStr.endsWith('-')) startStr = startStr.slice(0, -1);
+    if (endStr.endsWith('-')) endStr = endStr.slice(0, -1);
+    if (endStr < CUTOFF_DATE) return;
+
+    const isHourly = t.includes('csusztat') || t === 'cs' || t.includes('unnep') || t.includes('trening') || t.includes('tr');
+
+    let leaveHrs = 0;
+    if (isHourly) {
+      leaveHrs = Number(r.oraszam || r.orak || r.hours || 0);
+      if (!leaveHrs && r.kezdo_ido && r.veg_ido) {
+        const [h1, m1] = String(r.kezdo_ido).split(':').map(Number);
+        const [h2, m2] = String(r.veg_ido).split(':').map(Number);
+        if (!isNaN(h1) && !isNaN(h2)) leaveHrs = (h2 + m2 / 60) - (h1 + m1 / 60);
+      }
+      if (!leaveHrs) {
+        const intervalStr = String(r.ido || r.időtartam || r.ido_intervallum || '').trim();
+        if (intervalStr.includes('-')) {
+          const parts = intervalStr.split('-').map(s => s.trim());
+          if (parts.length === 2 && parts[0].includes(':') && parts[1].includes(':')) {
+            const [h1, m1] = parts[0].split(':').map(Number);
+            const [h2, m2] = parts[1].split(':').map(Number);
+            leaveHrs = (h2 + m2 / 60) - (h1 + m1 / 60);
+          }
+        }
+      }
+    } else {
+      // Teljes napos fizetett szabadság / betegszabadság = 8 óra fedezet
+      leaveHrs = standardDailyLimit;
+    }
+
+    let curr = new Date(startStr + 'T12:00:00');
+    const endD = new Date(endStr + 'T12:00:00');
+
+    while (curr <= endD) {
+      const y = curr.getFullYear();
+      const m = String(curr.getMonth() + 1).padStart(2, '0');
+      const d = String(curr.getDate()).padStart(2, '0');
+      const dStr = `${y}-${m}-${d}`;
+
+      if (dStr >= CUTOFF_DATE) {
+        if (!dailyLogsMap[dStr]) {
+          dailyLogsMap[dStr] = {
+            datum: dStr,
+            daytimeHours: 0,
+            leaveHours: 0,
+            nightHours: 0,
+            weekendHours: 0
+          };
+        }
+        dailyLogsMap[dStr].leaveHours = (dailyLogsMap[dStr].leaveHours || 0) + leaveHrs;
+      }
+      curr.setDate(curr.getDate() + 1);
     }
   });
 
@@ -4752,9 +4822,10 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
       }
     }
 
-    // 3. HÉTKOZNAPI TÚLMUNKA ÓRÁK
+    // 🎯 3. HÉTKOZNAPI TÚLMUNKA ÓRÁK (MUNKA + TÁVOLLÉT EGYÜTTESEN)
     const dailyLimit = (isWeekendDay || isHoliday) ? 0 : standardDailyLimit;
-    const weekdayOvertimeHrs = Math.max(0, dayObj.daytimeHours - dailyLimit);
+    const totalDaytime = (dayObj.daytimeHours || 0) + (dayObj.leaveHours || 0);
+    const weekdayOvertimeHrs = Math.max(0, totalDaytime - dailyLimit);
 
     if (weekdayOvertimeHrs > 0) {
       if (isExpired) {
@@ -4783,7 +4854,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
     return remaining;
   };
 
-  // 1. CSAK A 2026-10-01 UTÁNI KIVETT CSÚSZTATÁSOK LEVONÁSA (user_email alapján)
+  // 4. CSAK A 2026-10-01 UTÁNI KIVETT CSÚSZTATÁSOK LEVONÁSA
   let totalUsedHours = 0;
   (leaveRequests || []).forEach(r => {
     const reqStart = r.kezdo_datum ? String(r.kezdo_datum).substring(0, 10).replace(/\./g, '-').replace(/\//g, '-') : '';
@@ -4831,7 +4902,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
     if (uncoveredHours > 0) uncoveredHours = deductFrom(nightOvertimes, uncoveredHours);
   }
 
-  // 2. CSAK A 2026-10-01 UTÁNI KIFIZETÉSEK LEVONÁSA (user_email alapján)
+  // 5. KIFIZETÉSEK LEVONÁSA
   (overtimeDecisions || []).forEach(d => {
     const decDate = d.datum ? String(d.datum).substring(0, 10).replace(/\./g, '-').replace(/\//g, '-') : (d.created_at ? String(d.created_at).substring(0, 10).replace(/\./g, '-').replace(/\//g, '-') : '');
     if (!decDate || decDate < CUTOFF_DATE) return;
