@@ -1451,279 +1451,286 @@
 }
 
   async function updateJobList() {
-    const dv = document.getElementById('datePicker').value;
-    const hoursDisplay = document.getElementById('dayHours');
-    const div = document.getElementById('dayDetailList');
+  const dv = document.getElementById('datePicker').value;
+  const hoursDisplay = document.getElementById('dayHours');
+  const div = document.getElementById('dayDetailList');
 
-    if (!dv) return;
-    hoursDisplay.innerText = "...";
+  if (!dv) return;
+  hoursDisplay.innerText = "...";
+
+  try {
+    const emailClean = cleanEmail(currentUserProfile?.email);
+    const normalizedDv = typeof normalizeDateStr === 'function' ? normalizeDateStr(dv) : dv;
+
+    const isAllowed = await isWithinAllowedLoggingWindow(normalizedDv);
+
+    let lockAlert = document.getElementById('lockAlertBanner');
+    if (!lockAlert) {
+      lockAlert = document.createElement('div');
+      lockAlert.id = 'lockAlertBanner';
+      const topTargetEl = document.getElementById('dailyStatus');
+      if (topTargetEl && topTargetEl.parentNode) {
+        topTargetEl.parentNode.insertBefore(lockAlert, topTargetEl);
+      }
+    }
+
+    // 🎯 1. KIFIZETÉSI ZÁROLÁS (overtime_decisions) ÉS NYITÁSI KÉRELMEK (requests) LEKÉRDEZÉSE
+    let isPending = false;
+    let isPayoutLocked = false;
 
     try {
-      const emailClean = cleanEmail(currentUserProfile?.email);
-      const normalizedDv = typeof normalizeDateStr === 'function' ? normalizeDateStr(dv) : dv;
-
-      const isAllowed = await isWithinAllowedLoggingWindow(normalizedDv);
-
-      let lockAlert = document.getElementById('lockAlertBanner');
-      if (!lockAlert) {
-         lockAlert = document.createElement('div');
-         lockAlert.id = 'lockAlertBanner';
-         const topTargetEl = document.getElementById('dailyStatus');
-         if (topTargetEl && topTargetEl.parentNode) {
-             topTargetEl.parentNode.insertBefore(lockAlert, topTargetEl);
-         }
-      }
-
-      // 🎯 1. KIFIZETÉSI ZÁROLÁS (overtime_decisions) ÉS NYITÁSI KÉRELMEK (requests) LEKÉRDEZÉSE
-      let isPending = false;
-      let isPayoutLocked = false;
-
-      try {
-        const [payoutRes, reqsRes] = await Promise.all([
-          supabaseClient
-            .from('overtime_decisions')
-            .select('*')
-            .ilike('user_email', emailClean),
-          supabaseClient
-            .from('requests')
-            .select('id, status')
-            .ilike('user_email', emailClean)
-            .eq('datum', normalizedDv)
-        ]);
-
-        if (payoutRes.data && payoutRes.data.length > 0) {
-          const matchingPayouts = payoutRes.data.filter(p => {
-            const pDate = String(p.datum || p.date || p.month || '').substring(0, 10);
-            const st = String(p.status || p.decision || '').toLowerCase().trim();
-            const isRejected = ['rejected', 'elutasitva', 'cancelled', 'visszavont'].includes(st);
-
-            const dateMatches = pDate === normalizedDv || normalizedDv.startsWith(pDate);
-            return dateMatches && !isRejected;
-          });
-
-          if (matchingPayouts.length > 0) {
-            isPayoutLocked = true;
-          }
-        }
-
-        if (reqsRes.data && reqsRes.data.length > 0) {
-          const pendingStatuses = ['pending_level1', 'pending_admin', 'pending', 'függőben'];
-          isPending = reqsRes.data.some(r => pendingStatuses.includes(String(r.status || '').toLowerCase().trim()));
-        }
-      } catch(err) { console.error("Zárolás ellenőrzési hiba:", err); }
-
-      const toggleFormState = (enable) => {
-        const pointerVal = enable ? 'auto' : 'none';
-        const opacityVal = enable ? '1' : '0.4';
-
-        const wf = document.getElementById('workForm');
-        if (wf) { wf.style.pointerEvents = pointerVal; wf.style.opacity = opacityVal; }
-
-        const fa = document.getElementById('favoritesArea');
-        if (fa) { fa.style.pointerEvents = pointerVal; fa.style.opacity = opacityVal; }
-
-        const sh = document.querySelector('.search-box-highlight');
-        if (sh) { sh.style.pointerEvents = pointerVal; sh.style.opacity = opacityVal; }
-      };
-
-      // 🎯 2. BANNER ÉS ŰRLAP ÁLLAPOT BEÁLLÍTÁSA A KIFIZETÉSI VAGY NAPI ZÁROLÁS ALAPJÁN
-      if (isPayoutLocked) {
-         lockAlert.innerHTML = `
-           <div class="alert alert-info py-2 mb-3 small d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 border-start border-4 border-info shadow-sm">
-             <span><i class="bi bi-cash-stack me-1"></i> <strong>Erre a napra (${normalizedDv}) a túlmunka kifizetésre lett küldve / kifizetve.</strong> Az órák módosítása zárolva van.</span>
-             <span class="badge bg-info text-dark py-1.5 px-3 fs-6"><i class="bi bi-lock-fill me-1"></i>Kifizetésre elküldve</span>
-           </div>`;
-         lockAlert.style.display = 'block';
-         toggleFormState(false);
-      } else if (!isAllowed) {
-         if (isPending) {
-            lockAlert.innerHTML = `
-             <div class="alert alert-warning py-2 mb-3 small d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 border-start border-4 border-warning shadow-sm">
-               <span><i class="bi bi-clock-history me-1"></i> <strong>A nyitási kérelem erre a napra (${normalizedDv}) elbírálás alatt van.</strong></span>
-               <span class="badge bg-warning text-dark py-1.5 px-3 fs-6"><i class="bi bi-hourglass-split me-1"></i>Függőben</span>
-             </div>`;
-         } else {
-            lockAlert.innerHTML = `
-             <div class="alert alert-danger py-2 mb-3 small d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 border-start border-4 border-danger shadow-sm">
-               <span><i class="bi bi-lock-fill me-1"></i> <strong>Ez a nap lezárt (${normalizedDv}).</strong> Rögzítéshez nyitási kérelmet kell beküldened!</span>
-               <button class="btn btn-sm btn-warning fw-bold py-1 px-3 text-dark text-nowrap" onclick="openRequestModal('${normalizedDv}')">
-                 <i class="bi bi-unlock-fill me-1"></i> Nyitási kérelem
-               </button>
-             </div>`;
-         }
-         lockAlert.style.display = 'block';
-         toggleFormState(false);
-      } else {
-         lockAlert.style.display = 'none';
-         toggleFormState(true);
-      }
-
-      // 🎯 3. WORK_LOGS ÉS LEAVE_REQUESTS LEKÉRDEZÉSE
-      const [logsRes, leaveRes] = await Promise.all([
-        supabaseClient.from('work_logs').select('*').ilike('user_email', emailClean).eq('datum', normalizedDv),
-        supabaseClient.from('leave_requests').select('*').ilike('user_email', emailClean)
+      const [payoutRes, reqsRes] = await Promise.all([
+        supabaseClient
+          .from('overtime_decisions')
+          .select('*')
+          .ilike('user_email', emailClean),
+        supabaseClient
+          .from('requests')
+          .select('id, status')
+          .ilike('user_email', emailClean)
+          .eq('datum', normalizedDv)
       ]);
 
-      if (logsRes.error) throw logsRes.error;
+      if (payoutRes.data && payoutRes.data.length > 0) {
+        const matchingPayouts = payoutRes.data.filter(p => {
+          const st = String(p.status || p.decision || '').toLowerCase().trim();
+          const isRejected = ['rejected', 'elutasitva', 'cancelled', 'visszavont'].includes(st);
+          if (isRejected) return false;
 
-      const dailyLimit = Number(currentUserProfile?.munkaido_keret || currentUserProfile?.napi_limit) || 8;
+          // 1. Vizsgálat: szerepel-e a megnyitott nap az indoklásban megjelölt érintett napok közt?
+          const comment = String(p.megjegyzes || p.indoklas || '');
+          if (comment.includes(normalizedDv)) return true;
 
-      // 🎯 SZŰRÉS: Home Office ÉS Ügyfél (Ü) TÁVOLLÉTEK KIZÁRÁSA
-      const activeLeaves = (leaveRes.data || []).filter(req => {
-        const st = String(req.status || req.statusz || req.allapot || '').toLowerCase().trim();
-        const isApproved = ['approved', 'elfogadva', 'jóváhagyva', 'jóváhagyott'].some(a => st.includes(a));
-        if (!isApproved) return false;
+          // 2. Vizsgálat: ha létezik külön erintett_napok mező
+          if (p.erintett_napok && String(p.erintett_napok).includes(normalizedDv)) return true;
 
-        const rawType = String(req.tipus || req.jelleg || req.tavollet_tipusa || '').toLowerCase().trim();
-        const isExcluded = rawType.includes('home') || rawType.includes('office') || rawType === 'ho' || rawType.includes('otthoni') ||
-                           rawType.includes('ügyfél') || rawType.includes('ugyfel') || rawType === 'ü' || rawType.startsWith('ü -') || rawType.startsWith('u -');
-        if (isExcluded) return false;
+          // 3. Szigorú PONTOS napiegyezés (a teljes hónapot lezáró startsWith törölve!)
+          const pDate = String(p.datum || p.date || '').substring(0, 10);
+          if (pDate && pDate === normalizedDv) return true;
 
-        const rawStart = req.kezdo_datum || req.datum || req.start_date;
-        const rawEnd = req.veg_datum || req.kezdo_datum || req.datum || req.end_date;
+          return false;
+        });
 
-        const start = typeof normalizeDateStr === 'function' ? normalizeDateStr(rawStart) : String(rawStart).substring(0, 10);
-        const end = typeof normalizeDateStr === 'function' ? normalizeDateStr(rawEnd) : String(rawEnd).substring(0, 10);
-
-        return normalizedDv >= start && normalizedDv <= end;
-      });
-
-      // 🎯 EGYSÉGESÍTETT TÁVOLLÉT SZŰRŐ (GOLYÓÁLLÓ \bho\b ILLESZKEDÉSSEL)
-      const isAbsenceLog = (l) => {
-        const txt = typeof normalizeStr === 'function'
-          ? normalizeStr(`${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`)
-          : `${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`.toLowerCase();
-
-        return txt.includes('tavollet') || 
-               txt.includes('szabadsag') || 
-               txt.includes('szabi') || 
-               txt.includes('beteg') || 
-               txt.includes('tappenz') || 
-               txt.includes('home office') || 
-               txt.includes('otthoni') ||
-               /\bho\b/i.test(txt);
-      };
-
-      const filteredLogs = (logsRes.data || []).filter(l => !isAbsenceLog(l));
-
-      const groupedMap = {};
-      filteredLogs.forEach(item => {
-        const isNight = item.ejszakai_esemeny === true || String(item.ejszakai_esemeny).toLowerCase() === 'true';
-        const isWeekend = item.hetvegi_esemeny === true || String(item.hetvegi_esemeny).toLowerCase() === 'true';
-
-        const key = `${item.munkaszam}_${item.vevo || ''}_${item.munka || ''}_night:${isNight}_wnd:${isWeekend}`;
-        
-        if (!groupedMap[key]) {
-          groupedMap[key] = { ...item, oraszam: 0, extraIds: [], isNight, isWeekend };
-        } else {
-          groupedMap[key].extraIds.push(item.id);
+        if (matchingPayouts.length > 0) {
+          isPayoutLocked = true;
         }
-        groupedMap[key].oraszam += Number(item.oraszam || 0);
-      });
+      }
 
-      const logs = Object.values(groupedMap);
-      let dailyTotal = logs.reduce((sum, item) => sum + item.oraszam, 0);
+      if (reqsRes.data && reqsRes.data.length > 0) {
+        const pendingStatuses = ['pending_level1', 'pending_admin', 'pending', 'függőben'];
+        isPending = reqsRes.data.some(r => pendingStatuses.includes(String(r.status || '').toLowerCase().trim()));
+      }
+    } catch(err) { console.error("Zárolás ellenőrzési hiba:", err); }
 
-      const canEdit = isAllowed && !isPayoutLocked;
+    const toggleFormState = (enable) => {
+      const pointerVal = enable ? 'auto' : 'none';
+      const opacityVal = enable ? '1' : '0.4';
 
-      let htmlItems = logs.map(i => {
-        const allIds = [i.id, ...i.extraIds].join(',');
+      const wf = document.getElementById('workForm');
+      if (wf) { wf.style.pointerEvents = pointerVal; wf.style.opacity = opacityVal; }
 
-        let typeBadge = '';
-        if (i.isNight) {
-          typeBadge += `<span class="badge bg-dark text-warning border border-warning ms-1" style="font-size: 0.7rem;"><i class="bi bi-moon-stars me-1"></i>Éjszakai</span>`;
-        }
-        if (i.isWeekend) {
-          typeBadge += `<span class="badge bg-primary-subtle text-primary border border-primary-subtle ms-1" style="font-size: 0.7rem;"><i class="bi bi-calendar-event me-1"></i>Hétvégi</span>`;
-        }
+      const fa = document.getElementById('favoritesArea');
+      if (fa) { fa.style.pointerEvents = pointerVal; fa.style.opacity = opacityVal; }
 
-        const lockMsg = isPayoutLocked 
-          ? 'Ez a túlmunka már kifizetésre lett küldve, így az órák nem módosíthatók!' 
-          : 'Ez a nap már lezárt. Módosításhoz nyitási kérelmet kell beküldened!';
+      const sh = document.querySelector('.search-box-highlight');
+      if (sh) { sh.style.pointerEvents = pointerVal; sh.style.opacity = opacityVal; }
+    };
 
-        return `
-          <div class="d-flex justify-content-between align-items-center py-2 mb-1 border-bottom">
-            <div class="flex-grow-1 min-w-0 pe-2">
-              <div class="small text-truncate">
-                <strong class="text-primary">${escapeHtml(i.munkaszam)}</strong> 
-                <span class="text-muted mx-1">|</span> 
-                <span class="text-dark">${escapeHtml(i.vevo || "")}</span>
-                ${typeBadge}
-              </div>
-              <div class="text-muted small text-truncate" style="margin-top: -2px; font-size: 0.8rem;">
-                ${escapeHtml(i.munka || "Nincs megnevezés")}
-              </div>
+    // 🎯 2. BANNER ÉS ŰRLAP ÁLLAPOT BEÁLLÍTÁSA A KIFIZETÉSI VAGY NAPI ZÁROLÁS ALAPJÁN
+    if (isPayoutLocked) {
+      lockAlert.innerHTML = `
+        <div class="alert alert-info py-2 mb-3 small d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 border-start border-4 border-info shadow-sm">
+          <span><i class="bi bi-cash-stack me-1"></i> <strong>Erre a napra (${normalizedDv}) a túlmunka kifizetésre lett küldve / kifizetve.</strong> Az órák módosítása zárolva van.</span>
+          <span class="badge bg-info text-dark py-1.5 px-3 fs-6"><i class="bi bi-lock-fill me-1"></i>Kifizetésre elküldve</span>
+        </div>`;
+      lockAlert.style.display = 'block';
+      toggleFormState(false);
+    } else if (!isAllowed) {
+      if (isPending) {
+        lockAlert.innerHTML = `
+          <div class="alert alert-warning py-2 mb-3 small d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 border-start border-4 border-warning shadow-sm">
+            <span><i class="bi bi-clock-history me-1"></i> <strong>A nyitási kérelem erre a napra (${normalizedDv}) elbírálás alatt van.</strong></span>
+            <span class="badge bg-warning text-dark py-1.5 px-3 fs-6"><i class="bi bi-hourglass-split me-1"></i>Függőben</span>
+          </div>`;
+      } else {
+        lockAlert.innerHTML = `
+          <div class="alert alert-danger py-2 mb-3 small d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 border-start border-4 border-danger shadow-sm">
+            <span><i class="bi bi-lock-fill me-1"></i> <strong>Ez a nap lezárt (${normalizedDv}).</strong> Rögzítéshez nyitási kérelmet kell beküldened!</span>
+            <button class="btn btn-sm btn-warning fw-bold py-1 px-3 text-dark text-nowrap" onclick="openRequestModal('${normalizedDv}')">
+              <i class="bi bi-unlock-fill me-1"></i> Nyitási kérelem
+            </button>
+          </div>`;
+      }
+      lockAlert.style.display = 'block';
+      toggleFormState(false);
+    } else {
+      lockAlert.style.display = 'none';
+      toggleFormState(true);
+    }
+
+    // 🎯 3. WORK_LOGS ÉS LEAVE_REQUESTS LEKÉRDEZÉSE
+    const [logsRes, leaveRes] = await Promise.all([
+      supabaseClient.from('work_logs').select('*').ilike('user_email', emailClean).eq('datum', normalizedDv),
+      supabaseClient.from('leave_requests').select('*').ilike('user_email', emailClean)
+    ]);
+
+    if (logsRes.error) throw logsRes.error;
+
+    const dailyLimit = Number(currentUserProfile?.munkaido_keret || currentUserProfile?.napi_limit) || 8;
+
+    // Szűrés: Home Office és Ügyfél kizárása
+    const activeLeaves = (leaveRes.data || []).filter(req => {
+      const st = String(req.status || req.statusz || req.allapot || '').toLowerCase().trim();
+      const isApproved = ['approved', 'elfogadva', 'jóváhagyva', 'jóváhagyott'].some(a => st.includes(a));
+      if (!isApproved) return false;
+
+      const rawType = String(req.tipus || req.jelleg || req.tavollet_tipusa || '').toLowerCase().trim();
+      const isExcluded = rawType.includes('home') || rawType.includes('office') || rawType === 'ho' || rawType.includes('otthoni') ||
+                         rawType.includes('ügyfél') || rawType.includes('ugyfel') || rawType === 'ü' || rawType.startsWith('ü -') || rawType.startsWith('u -');
+      if (isExcluded) return false;
+
+      const rawStart = req.kezdo_datum || req.datum || req.start_date;
+      const rawEnd = req.veg_datum || req.kezdo_datum || req.datum || req.end_date;
+
+      const start = typeof normalizeDateStr === 'function' ? normalizeDateStr(rawStart) : String(rawStart).substring(0, 10);
+      const end = typeof normalizeDateStr === 'function' ? normalizeDateStr(rawEnd) : String(rawEnd).substring(0, 10);
+
+      return normalizedDv >= start && normalizedDv <= end;
+    });
+
+    const isAbsenceLog = (l) => {
+      const txt = typeof normalizeStr === 'function'
+        ? normalizeStr(`${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`)
+        : `${l.munkaszam || ''} ${l.vevo || ''} ${l.munka || ''}`.toLowerCase();
+
+      return txt.includes('tavollet') || 
+             txt.includes('szabadsag') || 
+             txt.includes('szabi') || 
+             txt.includes('beteg') || 
+             txt.includes('tappenz') || 
+             txt.includes('home office') || 
+             txt.includes('otthoni') || 
+             /\bho\b/i.test(txt);
+    };
+
+    const filteredLogs = (logsRes.data || []).filter(l => !isAbsenceLog(l));
+
+    const groupedMap = {};
+    filteredLogs.forEach(item => {
+      const isNight = item.ejszakai_esemeny === true || String(item.ejszakai_esemeny).toLowerCase() === 'true';
+      const isWeekend = item.hetvegi_esemeny === true || String(item.hetvegi_esemeny).toLowerCase() === 'true';
+
+      const key = `${item.munkaszam}_${item.vevo || ''}_${item.munka || ''}_night:${isNight}_wnd:${isWeekend}`;
+      
+      if (!groupedMap[key]) {
+        groupedMap[key] = { ...item, oraszam: 0, extraIds: [], isNight, isWeekend };
+      } else {
+        groupedMap[key].extraIds.push(item.id);
+      }
+      groupedMap[key].oraszam += Number(item.oraszam || 0);
+    });
+
+    const logs = Object.values(groupedMap);
+    let dailyTotal = logs.reduce((sum, item) => sum + item.oraszam, 0);
+
+    const canEdit = isAllowed && !isPayoutLocked;
+
+    let htmlItems = logs.map(i => {
+      const allIds = [i.id, ...i.extraIds].join(',');
+
+      let typeBadge = '';
+      if (i.isNight) {
+        typeBadge += `<span class="badge bg-dark text-warning border border-warning ms-1" style="font-size: 0.7rem;"><i class="bi bi-moon-stars me-1"></i>Éjszakai</span>`;
+      }
+      if (i.isWeekend) {
+        typeBadge += `<span class="badge bg-primary-subtle text-primary border border-primary-subtle ms-1" style="font-size: 0.7rem;"><i class="bi bi-calendar-event me-1"></i>Hétvégi</span>`;
+      }
+
+      const lockMsg = isPayoutLocked 
+        ? 'Ez a túlmunka már kifizetésre lett küldve, így az órák nem módosíthatók!' 
+        : 'Ez a nap már lezárt. Módosításhoz nyitási kérelmet kell beküldened!';
+
+      return `
+        <div class="d-flex justify-content-between align-items-center py-2 mb-1 border-bottom">
+          <div class="flex-grow-1 min-w-0 pe-2">
+            <div class="small text-truncate">
+              <strong class="text-primary">${escapeHtml(i.munkaszam)}</strong> 
+              <span class="text-muted mx-1">|</span> 
+              <span class="text-dark">${escapeHtml(i.vevo || "")}</span>
+              ${typeBadge}
             </div>
-            <div class="d-flex align-items-center justify-content-end flex-shrink-0 ms-1 gap-2" style="white-space: nowrap;">
-              <strong style="font-size: 0.9rem;" class="me-1">${Number(i.oraszam).toFixed(2)}</strong>
-              ${canEdit ? `
-              <button class="btn btn-sm btn-link text-info p-1 m-0 text-decoration-none" onclick="promptEditHour('${allIds}', '${i.munkaszam}',${i.oraszam})" title="Szerkesztés">
-                <i class="bi bi-pencil fs-6"></i>
-              </button>
-              <button class="btn btn-sm btn-link text-danger p-1 m-0 text-decoration-none" onclick="deleteEntry('${allIds}', '${i.munkaszam}')" title="Törlés">
-                <i class="bi bi-trash fs-6"></i>
-              </button>
-              ` : `
-              <button class="btn btn-sm btn-link text-secondary p-1 m-0 text-decoration-none" onclick="showModal('${lockMsg}', '${isPayoutLocked ? 'Kifizetett túlmunka' : 'Zárt nap'}')" title="Zárolt sor">
-                <i class="bi bi-lock-fill fs-6"></i>
-              </button>
-              `}
+            <div class="text-muted small text-truncate" style="margin-top: -2px; font-size: 0.8rem;">
+              ${escapeHtml(i.munka || "Nincs megnevezés")}
             </div>
           </div>
-        `;
-      });
+          <div class="d-flex align-items-center justify-content-end flex-shrink-0 ms-1 gap-2" style="white-space: nowrap;">
+            <strong style="font-size: 0.9rem;" class="me-1">${Number(i.oraszam).toFixed(2)}</strong>
+            ${canEdit ? `
+            <button class="btn btn-sm btn-link text-info p-1 m-0 text-decoration-none" onclick="promptEditHour('${allIds}', '${i.munkaszam}',${i.oraszam})" title="Szerkesztés">
+              <i class="bi bi-pencil fs-6"></i>
+            </button>
+            <button class="btn btn-sm btn-link text-danger p-1 m-0 text-decoration-none" onclick="deleteEntry('${allIds}', '${i.munkaszam}')" title="Törlés">
+              <i class="bi bi-trash fs-6"></i>
+            </button>
+            ` : `
+            <button class="btn btn-sm btn-link text-secondary p-1 m-0 text-decoration-none" onclick="showModal('${lockMsg}', '${isPayoutLocked ? 'Kifizetett túlmunka' : 'Zárt nap'}')" title="Zárolt sor">
+              <i class="bi bi-lock-fill fs-6"></i>
+            </button>
+            `}
+          </div>
+        </div>
+      `;
+    });
 
-      activeLeaves.forEach(leave => {
-        const rawType = String(leave.tipus || leave.jelleg || leave.tavollet_tipusa || '');
-        const normType = rawType
-          .toLowerCase()
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .trim();
+    activeLeaves.forEach(leave => {
+      const rawType = String(leave.tipus || leave.jelleg || leave.tavollet_tipusa || '');
+      const normType = rawType
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim();
 
-        // 🎯 PONTOS ÓRASSZÁM KISZÁMÍTÁSA A CENTRALIZÁLT FÜGGVÉNNYEL
-        const hours = parseLeaveHours(leave, dailyLimit);
+      const hours = parseLeaveHours(leave, dailyLimit);
 
-        const isHourly = normType.includes('csusztat') || normType === 'cs' || 
-                         normType.includes('unnep') || 
-                         normType.includes('trening') || normType.includes('tr');
+      const isHourly = normType.includes('csusztat') || normType === 'cs' || 
+                       normType.includes('unnep') || 
+                       normType.includes('trening') || normType.includes('tr');
 
-        let label = isHourly ? (leave.tipus || 'Óraalapú távollét') : "Távollét (szabadság, betegség)";
+      let label = isHourly ? (leave.tipus || 'Óraalapú távollét') : "Távollét (szabadság, betegség)";
 
-        if (hours > 0) {
-          dailyTotal += hours;
-          htmlItems.push(`
-            <div class="d-flex justify-content-between align-items-center py-2 mb-1 border-bottom bg-success-subtle px-2 rounded border border-success-subtle">
-              <div class="flex-grow-1 min-w-0 pe-2">
-                <div class="small fw-bold text-success-emphasis text-truncate">
-                  <i class="bi bi-calendar-check-fill me-1"></i> ${escapeHtml(label)}
-                </div>
-                <div class="text-muted small text-truncate" style="font-size: 0.75rem;">
-                  Jóváhagyva a SzabadságKezelőben (${escapeHtml(leave.tipus || 'Távollét')})
-                </div>
+      if (hours > 0) {
+        dailyTotal += hours;
+        htmlItems.push(`
+          <div class="d-flex justify-content-between align-items-center py-2 mb-1 border-bottom bg-success-subtle px-2 rounded border border-success-subtle">
+            <div class="flex-grow-1 min-w-0 pe-2">
+              <div class="small fw-bold text-success-emphasis text-truncate">
+                <i class="bi bi-calendar-check-fill me-1"></i> ${escapeHtml(label)}
               </div>
-              <div class="text-end flex-shrink-0 ms-2" style="white-space: nowrap;">
-                <strong class="text-success" style="font-size: 0.88rem; white-space: nowrap;">+${hours.toFixed(2)} óra</strong>
+              <div class="text-muted small text-truncate" style="font-size: 0.75rem;">
+                Jóváhagyva a SzabadságKezelőben (${escapeHtml(leave.tipus || 'Távollét')})
               </div>
             </div>
-          `);
-        }
-      });
-
-      hoursDisplay.innerText = dailyTotal.toFixed(2);
-      if (htmlItems.length > 0) {
-        div.innerHTML = htmlItems.join('');
-        div.style.display = 'block';
-      } else {
-        div.style.display = 'none';
+            <div class="text-end flex-shrink-0 ms-2" style="white-space: nowrap;">
+              <strong class="text-success" style="font-size: 0.88rem; white-space: nowrap;">+${hours.toFixed(2)} óra</strong>
+            </div>
+          </div>
+        `);
       }
-    } catch (e) {
-      console.error("Hiba az órák frissítésekor:", e);
-      hoursDisplay.innerText = "0.00";
+    });
+
+    hoursDisplay.innerText = dailyTotal.toFixed(2);
+    if (htmlItems.length > 0) {
+      div.innerHTML = htmlItems.join('');
+      div.style.display = 'block';
+    } else {
       div.style.display = 'none';
     }
+  } catch (e) {
+    console.error("Hiba az órák frissítésekor:", e);
+    hoursDisplay.innerText = "0.00";
+    div.style.display = 'none';
+  }
 }
-
   function deleteEntry(rawIds, jobNum) {
     if (document.getElementById('deleteModalJobIdDisplay')) document.getElementById('deleteModalJobIdDisplay').innerText = jobNum;
     if (document.getElementById('deleteModalRawIdsHidden')) document.getElementById('deleteModalRawIdsHidden').value = rawIds;
