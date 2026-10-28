@@ -2451,7 +2451,8 @@ function buildDecisionEmailHtml(dolgozoNeve, statusz, tipus, kezdoDatum, vegDatu
     // Alapértelmezett szerepkör és pozíció alapú jogosultságok
     canSeeTeam = ['manager', 'leader', 'csoportvezeto', 'admin', 'boss'].includes(cleanRole);
     canSeeAdmin = (cleanRole === 'admin');
-    canSeeOvertime = ['manager', 'leader', 'csoportvezeto', 'admin', 'boss', 'hr'].includes(cleanRole) || rawPos.includes('hr');
+    // 🎯 KIZÁRÓLAG MANAGER ÉS A FELETTI SZINT LÁTHATJA A TÚLMUNKA JÓVÁHAGYÁST
+    canSeeOvertime = ['manager', 'boss', 'admin'].includes(cleanRole);
     canSeePayroll = ['admin', 'boss', 'hr'].includes(cleanRole) || rawPos.includes('hr');
   }
 
@@ -5613,14 +5614,68 @@ async function submitPayoutRequest(event) {
     targetStatus = 'pending_manager';
   }
 
-  // 🎯 KIGYŰJTJÜK A KÉRT ÓRÁKKAL ÉRINTETT PONTOS NAPOKAT (pl. ["2026-10-12", "2026-10-14"])
-  const affectedDates = calculateAffectedDatesForPayout(targetEmail, categoryKey, hours);
+  // 🎯 1. A BEKÜLDŐ MANAGERÉNEK PONTOS MEGHATÁROZÁSA
+  const submitterRole = cleanRole(normalizeStr(currentUserProfile?.jogosultsag || currentUserProfile?.role || ''));
+  let submitterManagerEmail = '';
+
+  if (submitterRole === 'manager') {
+    // Ha a beküldő maga is Manager, a felettese a Boss / Igazgató
+    submitterManagerEmail = (currentUserProfile?.boss_email || '').trim().toLowerCase();
+  } else {
+    // Dolgozó, Csoportvezető vagy Leader esetén az ő közvetlen Managere
+    submitterManagerEmail = (currentUserProfile?.manager_email || '').trim().toLowerCase();
+
+    // Ha a beküldő profiljában hiányzik a manager, a célpont dolgozó managerét vizsgáljuk
+    if (!submitterManagerEmail && targetEmp) {
+      submitterManagerEmail = (targetEmp.manager_email || '').trim().toLowerCase();
+    }
+    // Ha még mindig üres, a Boss profiljára irányítjuk
+    if (!submitterManagerEmail) {
+      submitterManagerEmail = (currentUserProfile?.boss_email || targetEmp?.boss_email || '').trim().toLowerCase();
+    }
+  }
+
+  if (!submitterManagerEmail) {
+    submitterManagerEmail = 'admin.oranyilvantartas@spicecommunication.hu';
+  }
+
+  // Delegálás/helyettesítés ellenőrzése (ha a Manager éppen szabadságon van)
+  const effectiveApproverEmail = typeof getEffectiveApproverEmail === 'function'
+    ? await getEffectiveApproverEmail(submitterManagerEmail)
+    : submitterManagerEmail;
+
+  // 🎯 2. A MANAGER NEVÉNEK KIOLVASÁSA
+  let managerName = '';
+  const cachedMgr = (window.teamBalancesCache || teamBalancesCache || []).find(p => 
+    normalizeStr(p.email) === normalizeStr(submitterManagerEmail)
+  );
+
+  if (cachedMgr && cachedMgr.nev) {
+    managerName = cachedMgr.nev;
+  } else {
+    try {
+      const { data: mProf } = await supabaseClient
+        .from('profiles')
+        .select('nev')
+        .ilike('email', submitterManagerEmail)
+        .maybeSingle();
+      if (mProf && mProf.nev) managerName = mProf.nev;
+    } catch (e) {
+      console.warn("Nem sikerült lekérdezni a manager nevét:", e);
+    }
+  }
+  if (!managerName) managerName = submitterManagerEmail;
+
+  // 🎯 3. KIGYŰJTJÜK A KÉRT ÓRÁKKAL ÉRINTETT PONTOS NAPOKAT (FIFO elv)
+  const affectedDates = typeof calculateAffectedDatesForPayout === 'function'
+    ? calculateAffectedDatesForPayout(targetEmail, categoryKey, hours)
+    : [];
   const affectedDatesStr = affectedDates.join(', ');
   const primaryDate = affectedDates.length > 0 
     ? affectedDates[0] 
     : (typeof getLocalYMD === 'function' ? getLocalYMD() : new Date().toISOString().split('T')[0]);
 
-  // A megjegyzéshez csatoljuk az érintett napok listáját, amit a Projekt Nyilvántartás kiolvas a zároláshoz
+  // A megjegyzéshez csatoljuk az érintett napok listáját a Projekt Nyilvántartás napi szintű zárolásához
   const finalReason = reason + (affectedDatesStr ? `\n[Érintett napok: ${affectedDatesStr}]` : '');
 
   try {
@@ -5631,9 +5686,9 @@ async function submitPayoutRequest(event) {
       p_submitter_email: currentUserProfile?.email || null,
       p_submitter_name: currentUserProfile?.nev || null,
       p_submitter_group: currentUserProfile?.csoport || '',
-      p_manager_email: currentUserProfile?.email || null,
-      p_manager_nev: currentUserProfile?.nev || null,
-      p_approver_email: currentUserProfile?.email || null,
+      p_manager_email: submitterManagerEmail,        // 👈 A beküldő valódi managere
+      p_manager_nev: managerName,                    // 👈 A manager neve
+      p_approver_email: effectiveApproverEmail,      // 👈 A tényleges elbíráló (helyettesítéssel együtt)
       p_overtime_category: categoryKey || null,
       p_orak: isNaN(hours) ? 0 : hours,
       p_sav: sav || null,
@@ -5654,6 +5709,27 @@ async function submitPayoutRequest(event) {
       showToast(targetStatus === 'approved' ? "A kérelem automatikusan jóváhagyásra került!" : "Kérelmed sikeresen továbbítva a jóváhagyó felé!", "success");
     } else if (typeof showModal === 'function') {
       showModal(targetStatus === 'approved' ? "A kérelem automatikusan jóváhagyásra került!" : "Kérelmed sikeresen továbbítva a jóváhagyó felé!", "Siker");
+    }
+
+    // 🎯 4. ÉRTESÍTŐ E-MAIL KIKÜLDÉSE A MANAGERNEK (ha nem automatikus a jóváhagyás)
+    if (targetStatus !== 'approved' && effectiveApproverEmail && typeof sendAutomatedEmail === 'function') {
+      const subject = `💸 Új túlmunka kifizetési kérelem jóváhagyásra - ${targetName}`;
+      const bodyText = `Szia!\n\n${currentUserProfile?.nev || 'Egy vezető'} túlmunka kifizetési kérelmet nyújtott be ${targetName} részére:\n- Óraszám: ${hours} óra\n- Összeg: ${osszeg.toLocaleString('hu-HU')} Ft\n- Sáv: ${sav}\n- Indoklás: ${reason}\n\nKérlek, lépj be a Távollét Kezelő Portálra a kérelem elbírálásához!`;
+      
+      const htmlBody = `
+        <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; max-width: 500px;">
+          <h3 style="color: #15803d; margin-top: 0;">💸 Túlmunka Kifizetési Kérelem</h3>
+          <p><strong>${currentUserProfile?.nev || 'Egy vezető'}</strong> kifizetési kérelmet rögzített <strong>${targetName}</strong> munkatárs részére, ami jóváhagyásra vár nálad:</p>
+          <table style="width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 14px;">
+            <tr><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; color: #64748b;">Munkatárs:</td><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; font-weight: bold;">${targetName}</td></tr>
+            <tr><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; color: #64748b;">Kifizetendő óra:</td><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; font-weight: bold;">${hours} óra</td></tr>
+            <tr><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; color: #64748b;">Összeg:</td><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; font-weight: bold; color: #16a34a;">${osszeg.toLocaleString('hu-HU')} Ft</td></tr>
+            <tr><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; color: #64748b;">Sáv:</td><td style="padding: 6px; border-bottom: 1px solid #f1f5f9;">${sav}</td></tr>
+            <tr><td style="padding: 6px; color: #64748b;">Indoklás:</td><td style="padding: 6px; font-style: italic;">${reason}</td></tr>
+          </table>
+        </div>
+      `;
+      sendAutomatedEmail(effectiveApproverEmail, subject, bodyText, htmlBody);
     }
 
     const modalEl = document.getElementById('payoutModal');
@@ -5716,8 +5792,12 @@ async function loadOvertimeApprovals() {
     const myRoleRaw = safeNorm(prof.jogosultsag || prof.role || prof.pozicio || '');
     const isAdmin = myRoleRaw.includes('admin') || myRoleRaw.includes('boss');
     const isManager = (myRoleRaw.includes('manag') || myRoleRaw.includes('mgr')) && !isAdmin;
-    const isLeader = (myRoleRaw.includes('lead') || myRoleRaw.includes('head') || myRoleRaw.includes('vezeto')) && !isManager && !isAdmin;
-    const isCsv = (myRoleRaw.includes('csoportvez') || myRoleRaw.includes('csv')) && !isLeader && !isManager && !isAdmin;
+
+    // 🎯 KIZÁRÓLAG MANAGER ÉS A FELETTI SZINT LÉPHET TOVÁBB
+    if (!isAdmin && !isManager) {
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-4"><i class="bi bi-shield-lock me-1"></i> Ez a felület kizárólag Manager és a feletti szintű vezetők számára érhető el.</td></tr>`;
+      return;
+    }
 
     const isHRLeader = isManager && (safeNorm(prof.pozicio).includes('hr') || safeNorm(prof.pozicio).includes('human'));
     const isFinDirector = isManager && (safeNorm(prof.pozicio).includes('penzugy') || safeNorm(prof.pozicio).includes('finan') || safeNorm(prof.pozicio).includes('pénzügy'));
@@ -5803,7 +5883,6 @@ async function loadOvertimeApprovals() {
 
         if (targetProf) {
           if (isManager && (targetProf.isManager || targetProf.isBoss)) return false;
-          if ((isLeader || isCsv) && (targetProf.isManager || targetProf.isBoss)) return false;
         }
 
         const isDirectSub = targetProf && myEmail && (
@@ -5856,7 +5935,9 @@ async function loadOvertimeApprovals() {
           <td data-label="Óraszám" class="fw-bold">${r.orak || r.oraszam || 0} óra</td>
           <td data-label="Sáv">${bandBadge}</td>
           <td data-label="Összeg"><span class="fw-bold text-success">${currentFormatted}</span></td>
-          <td data-label="Indoklás" class="text-start"><small class="d-block text-truncate" style="max-width: 160px;" title="${reasonText}">${reasonText}</small></td>
+          <td data-label="Indoklás" class="text-start" style="min-width: 240px; max-width: 420px; white-space: normal;">
+            <small class="d-block text-break">${reasonText}</small>
+          </td>
           <td data-label="Beküldve"><small class="text-muted">${formatDate(r.created_at || r.datum)}</small></td>
           <td data-label="Műveletek" class="text-end pe-3">
             <div class="d-flex justify-content-end gap-1">
