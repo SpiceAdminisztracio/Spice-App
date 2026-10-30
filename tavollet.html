@@ -374,32 +374,188 @@
   .badge-u  { background-color: #854d0e !important; color: #ffffff !important; }
 
   /* =========================================================
-     4. COMPLEX BÉRSZÁMFEJTÉSI ÉS MÁTRIX TÁBLÁZAT WIDGETEK
-     ========================================================= */
-  .payroll-scroll,
-  .table-responsive.payroll-scroll,
-  .table-responsive.matrix-container {
-    overflow-x: auto !important;
-    -webkit-overflow-scrolling: touch !important;
-    display: block !important;
-    width: 100% !important;
-    border-radius: 16px !important;
-    border: 1px solid #e2e8f0 !important;
-    background: #ffffff !important;
-  }
+   4. COMPLEX BÉRSZÁMFEJTÉSI ÉS MÁTRIX TÁBLÁZAT WIDGETEK
+   ========================================================= */
 
-  .payroll-scroll table,
-  .table-responsive.payroll-scroll table,
-  .matrix-container table {
-    min-width: 680px !important;
-    border-collapse: collapse !important;
-  }
+/* 1. CSAPAT MÁTRIX MEGTARTÁSA (ne sérüljön a csapat fül) */
+.table-responsive.matrix-container {
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+  display: block !important;
+  width: 100% !important;
+  border-radius: 16px !important;
+  border: 1px solid #e2e8f0 !important;
+  background: #ffffff !important;
+}
 
-  .payroll-scroll td, .payroll-scroll th,
-  .matrix-container td, .matrix-container th {
-    white-space: nowrap !important;
-    vertical-align: middle !important;
-  }
+.matrix-container table {
+  min-width: 680px !important;
+  border-collapse: collapse !important;
+}
+
+.matrix-container td, .matrix-container th {
+  white-space: nowrap !important;
+  vertical-align: middle !important;
+}
+
+/* 2. BÉRSZÁMFEJTÉS: TELJES KÉPERNYŐS, CSÚSZKAMENTES MEGJELENÉS */
+.container.payroll-fluid {
+  max-width: 98% !important;
+  width: 98% !important;
+  padding-left: 10px !important;
+  padding-right: 10px !important;
+}
+
+#view-payroll {
+  width: 100% !important;
+  max-width: 100% !important;
+  padding: 0 !important;
+}
+
+/* Görgetés: vízszintes csúszka tiltva, függőlegesen görgethető */
+.payroll-scroll,
+.table-responsive.payroll-scroll {
+  overflow-x: hidden !important; /* Megszünteti a vízszintes csúszkát */
+  overflow-y: auto !important;
+  max-height: 75vh !important;
+  border-radius: 16px !important;
+  border: 1px solid #e2e8f0 !important;
+  background-color: #ffffff !important;
+  display: block !important;
+  width: 100% !important;
+}
+
+.payroll-scroll table,
+.payroll-table {
+  table-layout: fixed !important;
+  width: 100% !important;
+  min-width: 100% !important;
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+/* 🎯 EREDETI VILÁGOS FEJLÉC ALAPBEÁLLÍTÁS SÖTÉT SZÖVEGGEL */
+.payroll-scroll thead tr th {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 50 !important;
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+  font-weight: 700 !important;
+  padding: 3px 1px !important;
+  text-align: center !important;
+  font-size: 0.68rem !important;
+  border-bottom: 2px solid #cbd5e1 !important;
+  border-right: 1px solid #e2e8f0 !important;
+}
+
+/* Rögzített (Sticky) bal oldali Név oszlop - VILÁGOS HÁTTÉRREL */
+.payroll-scroll th.col-payroll-name,
+.payroll-scroll td.col-payroll-name {
+  width: 165px !important;
+  min-width: 165px !important;
+  max-width: 165px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  text-align: left !important;
+  padding-left: 10px !important;
+}
+
+.payroll-scroll thead th.col-payroll-name,
+.payroll-scroll thead tr th.col-payroll-name {
+  position: sticky !important;
+  top: 0 !important;
+  left: 0 !important;
+  z-index: 120 !important;
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+  border-right: 2px solid #cbd5e1 !important;
+  border-bottom: 2px solid #cbd5e1 !important;
+}
+
+.payroll-scroll tbody td.col-payroll-name {
+  position: sticky !important;
+  left: 0 !important;
+  z-index: 25 !important;
+  background-color: #ffffff !important;
+  border-right: 2px solid #cbd5e1 !important;
+  border-bottom: 1px solid #f1f5f9 !important;
+  font-size: 0.72rem !important;
+  font-weight: 700 !important;
+  color: #0f172a;
+}
+
+/* 🎯 EREDETI SZÜRKE HÉTVÉGI FEJLÉC ÉS CELLÁK */
+.payroll-scroll th.col-day-weekend {
+  background-color: #64748b !important; /* 👈 Javítva: eredeti szürke (nem piros) */
+  color: #ffffff !important;
+}
+
+.payroll-scroll th.col-day-head {
+  background-color: #f8fafc !important;
+  color: #1e293b !important;
+}
+
+.payroll-scroll td.weekend-cell {
+  background-color: #f1f5f9 !important; /* 👈 Eredeti finom szürke hétvégi cellaháttér */
+}
+
+/* 🎯 EREDETI SPECIFIKUS FEJLÉC SZÍNEK */
+.payroll-scroll th.col-payout-head {
+  background-color: #d1fae5 !important; /* Eredeti halványzöld túlmunka fejléc */
+  color: #065f46 !important;
+}
+
+.payroll-scroll th.col-leaves-summary {
+  background-color: #f1f5f9 !important; /* Eredeti távollét összegző fejléc */
+  color: #334155 !important;
+}
+
+/* Sor- és cellaméretek (kompakt illeszkedés a 31 naphoz) */
+.payroll-scroll tbody tr {
+  height: 26px !important;
+  cursor: pointer;
+}
+
+.payroll-scroll tbody td {
+  padding: 1px 0 !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-size: 0.72rem !important;
+  border-right: 1px solid #f1f3f5 !important;
+  border-bottom: 1px solid #f1f3f5 !important;
+  white-space: nowrap !important;
+}
+
+.payroll-scroll tbody tr:hover td {
+  background-color: #f8fafc !important;
+}
+
+/* 🎯 BÉRSZÁMFEJTÉS: KIJELÖLT SOR STÍLUSA */
+.payroll-scroll tbody tr.payroll-row-selected td {
+  background-color: #e0f2fe !important; /* Finom kék kijelölés a soron */
+}
+
+.payroll-scroll tbody tr.payroll-row-selected td.col-payroll-name {
+  background-color: #bae6fd !important; /* Rögzített Név oszlop kicsit sötétebb kékje */
+  color: #0369a1 !important;
+}
+
+.payroll-scroll tbody tr.payroll-row-selected td.weekend-cell {
+  background-color: #dbeafe !important;
+}
+
+/* 🎯 ÖSSZESÍTŐ OSZLOPOK FEJLÉCEI: TÖBBSOROS TÖRDELÉS ENGEDÉLYEZVE */
+.payroll-scroll thead th.col-summary-head {
+  white-space: normal !important; /* 👈 Engedélyezi a két soros szöveget */
+  line-height: 1.15 !important;
+  padding: 3px 2px !important;
+  font-size: 0.67rem !important;
+  vertical-align: middle !important;
+  background-color: #f8fafc !important;
+}
 
   /* =========================================================
      5. ALSÓ NAVIGÁCIÓ (BOTTOM BAR) ÉS MOBIL ELRENDEZÉS
@@ -6405,6 +6561,16 @@ async function submitChallenge() {
     target.classList.remove('d-none');
   }
 
+  // 🎯 Bérszámfejtés nézetben a konténer felveszi a teljes képernyő szélességét (98%), más fülön visszaáll
+  const mainContainer = document.querySelector('body > .container') || document.querySelector('.container');
+  if (mainContainer) {
+    if (viewName === 'payroll') {
+      mainContainer.classList.add('payroll-fluid');
+    } else {
+      mainContainer.classList.remove('payroll-fluid');
+    }
+  }
+
   syncBottomNavActiveState(viewName);
 
   if (viewName === 'team') loadPendingApprovals();
@@ -6418,6 +6584,7 @@ async function submitChallenge() {
     }
   }
 }
+
   function switchMobileTab(viewId, element) {
     document.querySelectorAll('.app-nav-item').forEach(item => item.classList.remove('active'));
     if (element) element.classList.add('active');
@@ -6683,279 +6850,370 @@ async function submitChallenge() {
   }
 
   async function loadPayrollReport() {
-    const monthInput = document.getElementById('payrollMonthFilter');
-    let monthVal = monthInput ? monthInput.value : '';
+  const monthInput = document.getElementById('payrollMonthFilter');
+  let monthVal = monthInput ? monthInput.value : '';
 
-    if (!monthVal) {
-      const now = new Date();
-      monthVal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      if (monthInput) monthInput.value = monthVal;
+  if (!monthVal) {
+    const now = new Date();
+    monthVal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    if (monthInput) monthInput.value = monthVal;
+  }
+
+  const thead = document.getElementById('payrollReportTableHeader');
+  const tbody = document.getElementById('payrollReportTableBody');
+
+  if (!thead || !tbody) return;
+
+  // 🎯 A táblázat megkapja a fix elrendezésű, teljes képernyős osztályt
+  const tableEl = thead.closest('table');
+  if (tableEl) {
+    tableEl.className = 'table table-bordered align-middle text-center mb-0 payroll-table';
+  }
+
+  tbody.innerHTML = '<tr><td colspan="45" class="text-center py-5"><div class="spinner-border spinner-border-sm text-primary me-2"></div>Adatok gyűjtése és kalkulálása...</td></tr>';
+
+  try {
+    const [yearStr, monthStr] = monthVal.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+    const daysInMonth = new Date(year, month, 0).getDate();
+
+    const monthStartStr = `${yearStr}-${String(month).padStart(2, '0')}-01`;
+    const monthEndStr = `${yearStr}-${String(month).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
+
+    const cleanYMD = (dStr) => {
+      if (!dStr) return null;
+      let s = String(dStr).trim().split('T')[0].split(' ')[0].replace(/[\.\/]/g, '-');
+      const parts = s.split('-').map(p => p.trim()).filter(Boolean);
+      if (parts.length === 3) {
+        let [y, m, d] = parts;
+        if (y.length === 2) y = '20' + y;
+        return `${y.padStart(4, '0')}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+      }
+      return null;
+    };
+
+    const fetchAllData = async (tableName) => {
+      let allRecords = [];
+      let from = 0;
+      const step = 1000;
+      while (true) {
+        const { data, error } = await supabaseClient.from(tableName).select('*').range(from, from + step - 1);
+        if (error) throw error;
+        if (data && data.length > 0) allRecords.push(...data);
+        if (!data || data.length < step) break;
+        from += step;
+      }
+      return allRecords;
+    };
+
+    // 🎯 1. LEKÉRDEZZÜK A PROFILOKAT, TÁVOLLÉTEKET, KIFIZETÉSEKET ÉS A SUPABASE HOLIDAYS TÁBLÁT IS
+    const [profilesRes, allLeaves, allPayouts, holidaysRes] = await Promise.all([
+      supabaseClient.from('profiles').select('*').order('nev', { ascending: true }),
+      fetchAllData('leave_requests'),
+      fetchAllData('overtime_decisions'),
+      supabaseClient.from('holidays').select('*')
+    ]);
+
+    if (profilesRes.error) throw profilesRes.error;
+
+    // 🎯 2. SUPABASE 'holidays' TÁBLA FELDOLGOZÁSA
+    const dbHolidayDates = new Set();
+    (holidaysRes?.data || []).forEach(h => {
+      const d = cleanYMD(h.datum || h.date || h.nap || h.kezdo_datum);
+      const tipus = String(h.tipus || h.type || '').toLowerCase();
+      // Áthelyezett ledolgozós munkanapok kivételével minden ünnepnek/pihenőnapnak minősül
+      if (d && !tipus.includes('munkanap')) {
+        dbHolidayDates.add(d);
+      }
+    });
+
+    if (typeof window !== 'undefined') {
+      window.holidayDates = Array.from(dbHolidayDates);
     }
 
-    const thead = document.getElementById('payrollReportTableHeader');
-    const tbody = document.getElementById('payrollReportTableBody');
+    // Ünnepnap-ellenőrző: adatbázis + automatikus naptári munkaszüneti napok fallback
+    const isHolidayDate = (dateStr) => {
+      if (dbHolidayDates.has(dateStr)) return true;
 
-    if (!thead || !tbody) return;
+      const parts = String(dateStr).split('-');
+      if (parts.length !== 3) return false;
+      const y = parseInt(parts[0], 10);
+      const md = `${parts[1]}-${parts[2]}`;
 
-    tbody.innerHTML = '<tr><td colspan="45" class="text-center py-5"><div class="spinner-border text-primary me-2"></div>Adatok gyűjtése és kalkulálása...</td></tr>';
+      const fixed = ['01-01', '03-15', '05-01', '08-20', '10-23', '11-01', '12-24', '12-25', '12-26'];
+      if (fixed.includes(md)) return true;
 
-    try {
-      const [yearStr, monthStr] = monthVal.split('-');
-      const year = parseInt(yearStr, 10);
-      const month = parseInt(monthStr, 10);
-      const daysInMonth = new Date(year, month, 0).getDate();
+      const a = y % 19, b = Math.floor(y / 100), c = y % 100;
+      const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+      const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+      const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+      const m = Math.floor((a + 11 * h + 22 * l) / 451);
+      const eMonth = Math.floor((h + l - 7 * m + 114) / 31);
+      const eDay = ((h + l - 7 * m + 114) % 31) + 1;
 
-      const monthStartStr = `${yearStr}-${String(month).padStart(2, '0')}-01`;
-      const monthEndStr = `${yearStr}-${String(month).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
+      const fmt = (dt) => `${y}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+      const goodFriday = fmt(new Date(y, eMonth - 1, eDay - 2, 12, 0, 0));
+      const easterMonday = fmt(new Date(y, eMonth - 1, eDay + 1, 12, 0, 0));
+      const whitMonday = fmt(new Date(y, eMonth - 1, eDay + 50, 12, 0, 0));
 
-      let headerHtml = `
-        <tr>
-          <th rowspan="2" class="align-middle text-start sticky-col bg-light shadow-sm" style="min-width: 200px; left: 0; z-index: 11;">Név</th>
-          <th rowspan="2" class="align-middle border-start">Éves<br>keret</th>
-          <th rowspan="2" class="align-middle text-primary">Még<br>kivehető</th>
-          <th rowspan="2" class="align-middle text-secondary">Még kiv.<br>tavalyi</th>
-          <th colspan="6" class="border-start border-end bg-light">Hónapban kivett (nap)</th>
-          <th rowspan="2" class="align-middle border-end bg-success-subtle">Túlmunka<br>kifizetés<br>(számított nettó összeg)</th>
-      `;
-      
-      for (let i = 1; i <= daysInMonth; i++) {
-        const d = new Date(year, month - 1, i).getDay();
-        const isWeekend = (d === 0 || d === 6);
-        headerHtml += `<th rowspan="2" class="align-middle ${isWeekend ? 'bg-secondary text-white' : ''}" style="min-width: 32px; padding: 4px;">${i}.</th>`;
+      return dateStr === goodFriday || dateStr === easterMonday || dateStr === whitMonday;
+    };
+
+    // 🎯 3. FEJLÉC FELÉPÍTÉSE (HÉTVÉGÉK ÉS A HOLIDAYS TÁBLÁBÓL JÖVŐ ÜNNEPNAPOK IS SZÜRKÉK)
+    let headerRow1 = `
+      <tr>
+        <th rowspan="2" class="col-payroll-name align-middle" style="position: sticky !important; top: 0 !important; left: 0 !important; z-index: 120 !important; background-color: #f8fafc !important;">Név</th>
+        <th rowspan="2" style="width: 48px; min-width: 46px;" class="col-summary-head align-middle" title="Idei éves keret">Éves<br>keret</th>
+        <th rowspan="2" style="width: 54px; min-width: 52px;" class="col-summary-head align-middle text-primary fw-bold" title="Még kivehető idei szabadság a hónapban">Még<br>kivehető</th>
+        <th rowspan="2" style="width: 54px; min-width: 52px;" class="col-summary-head align-middle text-secondary fw-bold" title="Még kivehető tavalyi szabadság a hónapban">Még kiv.<br>tavalyi</th>
+        <th colspan="6" class="align-middle fw-bold" style="background-color: #f1f5f9 !important; color: #334155 !important;">Hónapban kivett (nap)</th>
+        <th rowspan="2" style="width: 80px; background-color: #d1fae5 !important; color: #065f46 !important;" class="align-middle fw-bold" title="Túlmunka kifizetés">Túlmunka (számított nettó)</th>
+    `;
+
+    for (let i = 1; i <= daysInMonth; i++) {
+      const dateStr = `${yearStr}-${String(month).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+      const d = new Date(year, month - 1, i).getDay();
+      const isWeekend = (d === 0 || d === 6);
+      const isHoliday = isHolidayDate(dateStr);
+      const isNonWorkDay = isWeekend || isHoliday;
+
+      const bgClass = isNonWorkDay ? 'col-day-weekend' : 'col-day-head';
+      const tooltip = isHoliday ? 'title="Munkaszüneti nap"' : '';
+      headerRow1 += `<th rowspan="2" class="${bgClass} align-middle" style="width: 25px; min-width: 24px;" ${tooltip}>${i}.</th>`;
+    }
+
+    headerRow1 += `</tr>`;
+
+    let headerRow2 = `
+      <tr>
+        <th style="width: 24px; background-color: #f8fafc !important; color: #2563eb !important;" class="fw-bold" title="Szabadság">SZ</th>
+        <th style="width: 24px; background-color: #f8fafc !important; color: #dc2626 !important;" class="fw-bold" title="Betegszabadság">B</th>
+        <th style="width: 24px; background-color: #f8fafc !important; color: #0284c7 !important;" class="fw-bold" title="Apaszabadság">A</th>
+        <th style="width: 24px; background-color: #f8fafc !important; color: #d97706 !important;" class="fw-bold" title="Fizetés nélküli">FN</th>
+        <th style="width: 24px; background-color: #f8fafc !important; color: #4b5563 !important;" class="fw-bold" title="Tavalyi Szabadság">T</th>
+        <th style="width: 24px; background-color: #f8fafc !important; color: #16a34a !important;" class="fw-bold" title="Csúsztatás">CS</th>
+      </tr>
+    `;
+
+    thead.innerHTML = headerRow1 + headerRow2;
+
+    const countWorkDaysBetween = (sStr, eStr) => {
+      if (!sStr || !eStr) return 0;
+      let count = 0;
+      let cur = new Date(sStr + 'T12:00:00');
+      const end = new Date(eStr + 'T12:00:00');
+      while (cur <= end) {
+        const day = cur.getDay();
+        const isW = (day === 0 || day === 6);
+        const dStr = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`;
+        const isH = isHolidayDate(dStr);
+        if (!isW && !isH) count++;
+        cur.setDate(cur.getDate() + 1);
       }
-      
-      headerHtml += `</tr><tr>
-        <th class="border-start text-primary" title="Szabadság">SZ</th>
-        <th class="text-danger" title="Betegszabadság">B</th>
-        <th class="text-info" title="Apaszabadság">A</th>
-        <th class="text-warning" title="Fizetés nélküli">FN</th>
-        <th class="text-secondary" title="Tavalyi Szabadság">T</th>
-        <th class="border-end text-success" title="Csúsztatás">CS</th>
-      </tr>`;
-      thead.innerHTML = headerHtml;
+      return count;
+    };
 
-      // Biztonságos adatlekérdezési helper (elkerüli a PostgREST dátumszűrési crash-eket és NULL kihagyásokat)
-      const fetchAllData = async (tableName) => {
-        let allRecords = [];
-        let from = 0;
-        const step = 1000;
-        while (true) {
-          const { data, error } = await supabaseClient.from(tableName).select('*').range(from, from + step - 1);
-          if (error) throw error;
-          if (data && data.length > 0) allRecords.push(...data);
-          if (!data || data.length < step) break;
-          from += step;
+    // 🎯 4. CSAK A VIZSGÁLT HÓNAP VÉGÉIG ESŐ TÁVOLLÉTEK KERÜLNEK BE AZ EGYENLEG-SZÁMÍTÁSBA
+    const leavesUpToMonth = allLeaves
+      .filter(l => {
+        const startYMD = cleanYMD(l.kezdo_datum || l.datum);
+        return startYMD && startYMD <= monthEndStr;
+      })
+      .map(l => {
+        const startYMD = cleanYMD(l.kezdo_datum || l.datum);
+        const endYMD = cleanYMD(l.veg_datum || l.kezdo_datum || l.datum);
+
+        if (endYMD && endYMD > monthEndStr) {
+          const totalDays = countWorkDaysBetween(startYMD, endYMD);
+          const clampedDays = countWorkDaysBetween(startYMD, monthEndStr);
+          const originalHours = Number(l.oraszam) || 0;
+          const adjustedHours = totalDays > 0 ? (originalHours / totalDays) * clampedDays : originalHours;
+
+          return {
+            ...l,
+            veg_datum: monthEndStr,
+            oraszam: adjustedHours
+          };
         }
-        return allRecords;
-      };
+        return l;
+      });
 
-      const [profilesRes, allLeaves, allPayouts] = await Promise.all([
-        supabaseClient.from('profiles').select('*').order('nev', { ascending: true }),
-        fetchAllData('leave_requests'),
-        fetchAllData('overtime_decisions')
-      ]);
+    const profiles = (profilesRes.data || []).filter(p => {
+      const belepettYMD = cleanYMD(p.belepett);
+      const kilepettYMD = cleanYMD(p.kilepett);
 
-      if (profilesRes.error) throw profilesRes.error;
+      if (belepettYMD && belepettYMD > monthEndStr) return false;
+      if (kilepettYMD) {
+        if (kilepettYMD < monthStartStr) return false;
+      } else {
+        const st = normalizeStr(p.statusz || p.status || '');
+        if (st.includes('inaktiv')) return false;
+      }
+      return true;
+    });
 
-      const allProfiles = profilesRes.data || [];
+    let bodyHtml = '';
 
-      // Biztonságos dátum tisztító (YYYY-MM-DD formátumra hozza a pontozott/perjeles dátumokat is)
-      const cleanYMD = (dStr) => {
-        if (!dStr) return null;
-        let s = String(dStr).trim().split('T')[0].split(' ')[0].replace(/[\.\/]/g, '-');
-        const parts = s.split('-').map(p => p.trim()).filter(Boolean);
-        if (parts.length === 3) {
-          let [y, m, d] = parts;
-          if (y.length === 2) y = '20' + y;
-          return `${y.padStart(4, '0')}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-        }
-        return null;
-      };
+    profiles.forEach(p => {
+      const pEmail = normalizeStr(p.email);
+      const pName = normalizeStr(p.nev);
+      if (!pEmail && !pName) return;
 
-      // 🎯 PONTOS ÉS BIZTONSÁGOS MUNKAVISZONY SZŰRÉS A VIZSGÁLT HÓNAPRA
-      const profiles = allProfiles.filter(p => {
-        const belepettYMD = cleanYMD(p.belepett);
-        const kilepettYMD = cleanYMD(p.kilepett);
+      const evesKeret = Number(p.eves_keret) || 0;
+      const tavalyiKeret = Number(p.tavalyi_keret) || 0;
 
-        // 1. Ha még nem lépett be a vizsgált hónap végéig -> kizárjuk
-        if (belepettYMD && belepettYMD > monthEndStr) return false;
+      const exactUserStats = calculateUserLeaveStats(p.email, leavesUpToMonth, p.nev);
+      const megKivehetoSz = Math.max(0, evesKeret - exactUserStats.kivettIdei);
+      const megKivehetoTsz = Math.max(0, tavalyiKeret - exactUserStats.kivettTavalyi);
 
-        // 2. Ha van kilépési dátuma:
-        if (kilepettYMD) {
-          // Csak akkor zárjuk ki, ha a kilépés dátuma KORÁBBI, mint a vizsgált hónap 1. napja
-          // (Így pl. egy 09.15-i kilépés a szeptemberi riportban még benne van, de az októberiben már nem).
-          if (kilepettYMD < monthStartStr) return false;
-        } else {
-          // Ha NINCS kitöltve kilépési dátum, de a státusza inaktív -> kizárjuk
-          const st = normalizeStr(p.statusz || p.status || '');
-          if (st.includes('inaktiv')) return false;
-        }
+      let haviSz = 0, haviB = 0, haviApa = 0, haviFn = 0, haviTsz = 0, haviCs = 0;
+      let matrix = Array(daysInMonth).fill('');
 
+      const userLeaves = allLeaves.filter(l => {
+        const lEmail = normalizeStr(l.user_email || l.email);
+        const lName = normalizeStr(l.nev);
+
+        const isUserMatch = (p.id && l.profile_id && l.profile_id === p.id) ||
+          (pEmail && lEmail && lEmail === pEmail) ||
+          (pName && lName && lName === pName);
+
+        if (!isUserMatch) return false;
+
+        const st = normalizeStr(l.status);
+        if (st.includes('reject') || st.includes('elutasit') || st.includes('visszavon')) return false;
         return true;
       });
 
-      let bodyHtml = '';
+      userLeaves.forEach(req => {
+        if (!req.kezdo_datum) return;
+        const marker = getLeaveTypeMarker(req.tipus);
+        if (!marker || marker === 'EGYEB' || marker === 'HO') return;
 
-      profiles.forEach(p => {
-        const pEmail = normalizeStr(p.email);
-        const pName = normalizeStr(p.nev);
-        if (!pEmail && !pName) return;
+        const startComp = extractYMD(req.kezdo_datum);
+        const endComp = extractYMD(req.veg_datum || req.kezdo_datum);
+        if (!startComp || !endComp) return;
 
-        const evesKeret = Number(p.eves_keret) || 0;
-        const tavalyiKeret = Number(p.tavalyi_keret) || 0;
-        
-        const exactUserStats = calculateUserLeaveStats(p.email, allLeaves, p.nev);
-        const megKivehetoSz = Math.max(0, evesKeret - exactUserStats.kivettIdei);
-        const megKivehetoTsz = Math.max(0, tavalyiKeret - exactUserStats.kivettTavalyi);
+        let currD = new Date(startComp.y, startComp.m - 1, startComp.d, 12, 0, 0);
+        const endD = new Date(endComp.y, endComp.m - 1, endComp.d, 12, 0, 0);
 
-        let haviSz = 0, haviB = 0, haviApa = 0, haviFn = 0, haviTsz = 0, haviCs = 0;
-        let matrix = Array(daysInMonth).fill('');
-        
-        const userLeaves = allLeaves.filter(l => {
-          const lEmail = normalizeStr(l.user_email || l.email);
-          const lName = normalizeStr(l.nev);
-          
-          const isUserMatch = (p.id && l.profile_id && l.profile_id === p.id) ||
-            (pEmail && lEmail && lEmail === pEmail) ||
-            (pName && lName && lName === pName);
+        const st = normalizeStr(req.status);
+        const isApproved = st === 'approved' || st.includes('jovahagy') || st.includes('elfogad') || st === '' || st === 'null';
 
-          if (!isUserMatch) return false;
+        while (currD <= endD) {
+          const dY = currD.getFullYear();
+          const dM = currD.getMonth() + 1;
+          const dDay = currD.getDate();
+          const dayOfWeek = currD.getDay();
 
-          const st = normalizeStr(l.status);
-          if (st.includes('reject') || st.includes('elutasit') || st.includes('visszavon')) return false;
+          const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+          const dateStr = `${dY}-${String(dM).padStart(2,'0')}-${String(dDay).padStart(2,'0')}`;
+          const isHoliday = isHolidayDate(dateStr);
 
-          return true;
-        });
-
-        userLeaves.forEach(req => {
-          if (!req.kezdo_datum) return;
-          
-          const marker = getLeaveTypeMarker(req.tipus);
-          if (!marker || marker === 'EGYEB' || marker === 'HO') return;
-
-          const startComp = extractYMD(req.kezdo_datum);
-          const endComp = extractYMD(req.veg_datum || req.kezdo_datum);
-          if (!startComp || !endComp) return;
-
-          let currD = new Date(startComp.y, startComp.m - 1, startComp.d, 12, 0, 0);
-          const endD = new Date(endComp.y, endComp.m - 1, endComp.d, 12, 0, 0);
-
-          const st = normalizeStr(req.status);
-          const isApproved = st === 'approved' || st.includes('jovahagy') || st.includes('elfogad') || st === '' || st === 'null';
-
-          while (currD <= endD) {
-            const dY = currD.getFullYear();
-            const dM = currD.getMonth() + 1;
-            const dDay = currD.getDate();
-            const dayOfWeek = currD.getDay();
-            
-            const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
-            const dateStr = `${dY}-${String(dM).padStart(2,'0')}-${String(dDay).padStart(2,'0')}`;
-            const isHoliday = (typeof holidayDates !== 'undefined') && Array.isArray(holidayDates) && holidayDates.includes(dateStr);
-            
-            if (!isWeekend && !isHoliday) {
-              if (dY === year && dM === month) {
-                if (isApproved) {
-                  if (marker === 'SZ') haviSz++;
-                  else if (marker === 'B') haviB++;
-                  else if (marker === 'A') haviApa++;
-                  else if (marker === 'FN') haviFn++;
-                  else if (marker === 'T') haviTsz++;
-                  else if (marker === 'CS') haviCs++;
-                }
-                matrix[dDay - 1] = isApproved ? marker : `${marker}*`;
+          // Csak munkanapokon számoljuk az elszámolt távolléteket
+          if (!isWeekend && !isHoliday) {
+            if (dY === year && dM === month) {
+              if (isApproved) {
+                if (marker === 'SZ') haviSz++;
+                else if (marker === 'B') haviB++;
+                else if (marker === 'A') haviApa++;
+                else if (marker === 'FN') haviFn++;
+                else if (marker === 'T') haviTsz++;
+                else if (marker === 'CS') haviCs++;
               }
+              matrix[dDay - 1] = isApproved ? marker : `${marker}*`;
             }
-            currD.setDate(currD.getDate() + 1);
           }
-        });
-        
-        let haviTuloOrak = 0;
-        let haviTuloOsszeg = 0;
-        
-        const userPayouts = allPayouts.filter(po => {
-          const poEmail = normalizeStr(po.user_email || po.email);
-          const poName = normalizeStr(po.nev);
-          const isMatch = (p.id && po.profile_id && po.profile_id === p.id) ||
-            (pEmail && poEmail && poEmail === pEmail) ||
-            (pName && poName && poName === pName);
-
-          if (!isMatch) return false;
-
-          const st = normalizeStr(po.status);
-          const isApproved = st === 'approved' || st.includes('jovahagy') || st === 'challenged';
-          
-          const tipusClean = normalizeStr(po.tipus);
-          const isPayout = tipusClean.includes('kifizetes') || tipusClean.includes('payout');
-          if (!isApproved || !isPayout) return false;
-
-          const subDateStr = po.created_at || po.datum;
-          const appDateStr = po.approved_at || po.updated_at || subDateStr;
-
-          const period = getPayrollPeriodForDate(subDateStr, appDateStr);
-          if (!period) return false;
-
-          return period.y === year && period.m === month;
-        });
-        
-        userPayouts.forEach(po => {
-          haviTuloOrak += Number(po.orak || 0);
-          haviTuloOsszeg += Number(po.osszeg || po.eredeti_osszeg || 0);
-        });
-        
-        let payoutDisplay = '-';
-        if (haviTuloOsszeg > 0) {
-          payoutDisplay = `<span class="fw-bold text-success">${haviTuloOsszeg.toLocaleString('hu-HU')} Ft</span>`;
+          currD.setDate(currD.getDate() + 1);
         }
-
-        bodyHtml += `<tr>
-          <td class="text-start fw-bold sticky-col shadow-sm" style="background-color: #fcfcfc; left: 0; z-index: 1;">${escapeHtml(p.nev || p.email)}</td>
-          <td class="border-start">${evesKeret}</td>
-          <td class="fw-bold ${megKivehetoSz === 0 ? 'text-danger' : 'text-primary'}">${megKivehetoSz}</td>
-          <td class="fw-bold ${megKivehetoTsz === 0 ? 'text-danger' : 'text-secondary'}">${megKivehetoTsz}</td>
-          
-          <td class="border-start ${haviSz > 0 ? 'bg-primary-subtle fw-bold text-primary' : ''}">${haviSz || '-'}</td>
-          <td class="${haviB > 0 ? 'bg-danger-subtle fw-bold text-danger' : ''}">${haviB || '-'}</td>
-          <td class="${haviApa > 0 ? 'bg-info-subtle fw-bold text-info' : ''}">${haviApa || '-'}</td>
-          <td class="${haviFn > 0 ? 'bg-warning-subtle fw-bold text-warning' : ''}">${haviFn || '-'}</td>
-          <td class="${haviTsz > 0 ? 'bg-secondary-subtle fw-bold text-secondary' : ''}">${haviTsz || '-'}</td>
-          <td class="border-end ${haviCs > 0 ? 'bg-success-subtle fw-bold text-success' : ''}">${haviCs || '-'}</td>
-          
-          <td class="border-end bg-success-subtle align-middle" style="line-height: 1.1;">${payoutDisplay}</td>
-        `;
-        
-        for(let i = 0; i < daysInMonth; i++) {
-          const d = new Date(year, month - 1, i + 1).getDay();
-          const isWeekend = (d === 0 || d === 6);
-          let rawM = matrix[i] || '';
-          const isPendingCell = rawM.endsWith('*');
-          const m = isPendingCell ? rawM.slice(0, -1) : rawM;
-          
-          let cellStyle = isWeekend ? 'background-color: #e9ecef;' : '';
-          let pendingBorder = isPendingCell ? 'border: 2px dashed #f59e0b; opacity: 0.8;' : '';
-          
-          if (m === 'SZ') { cellStyle = 'background-color: #84cc16; color: #1a4731; font-weight: bold;'; }
-          else if (m === 'T') { cellStyle = 'background-color: #a3e635; color: #1a4731; font-weight: bold;'; }
-          else if (m === 'B') { cellStyle = 'background-color: #22c55e; color: #ffffff; font-weight: bold;'; }
-          else if (m === 'A') { cellStyle = 'background-color: #0284c7; color: #ffffff; font-weight: bold;'; }
-          else if (m === 'FN') { cellStyle = 'background-color: #ffc107; color: #000000; font-weight: bold;'; }
-          else if (m === 'CS') { cellStyle = 'background-color: #ec4899; color: #ffffff; font-weight: bold;'; }
-          else if (m === 'K') { cellStyle = 'background-color: #796b85; color: #ffffff; font-weight: bold;'; }
-          else if (m === 'TR') { cellStyle = 'background-color: #eab308; color: #000000; font-weight: bold;'; }
-          else if (m === 'Ü') { cellStyle = 'background-color: #854d0e; color: #ffffff; font-weight: bold;'; }
-          
-          bodyHtml += `<td class="align-middle" style="padding: 2px; font-size: 0.8rem; ${cellStyle} ${pendingBorder}">${m}${isPendingCell ? '⏳' : ''}</td>`;
-        }
-        
-        bodyHtml += `</tr>`;
       });
-      
-      tbody.innerHTML = bodyHtml || '<tr><td colspan="45" class="text-muted py-4">Nincs megjeleníthető adat.</td></tr>';
-      
-    } catch (err) {
-      console.error("Bérfejtés hiba:", err);
-      tbody.innerHTML = `<tr><td colspan="45" class="text-danger py-4 fw-bold">Hiba történt a generáláskor: ${err.message}</div>`;
-    }
+
+      let haviTuloOsszeg = 0;
+      const userPayouts = allPayouts.filter(po => {
+        const poEmail = normalizeStr(po.user_email || po.email);
+        const poName = normalizeStr(po.nev);
+        const isMatch = (p.id && po.profile_id && po.profile_id === p.id) ||
+          (pEmail && poEmail && poEmail === pEmail) ||
+          (pName && poName && poName === pName);
+
+        if (!isMatch) return false;
+
+        const st = normalizeStr(po.status);
+        const isApproved = st === 'approved' || st.includes('jovahagy') || st === 'challenged';
+        const tipusClean = normalizeStr(po.tipus);
+        const isPayout = tipusClean.includes('kifizetes') || tipusClean.includes('payout');
+        if (!isApproved || !isPayout) return false;
+
+        const subDateStr = po.created_at || po.datum;
+        const appDateStr = po.approved_at || po.updated_at || subDateStr;
+        const period = getPayrollPeriodForDate(subDateStr, appDateStr);
+        if (!period) return false;
+
+        return period.y === year && period.m === month;
+      });
+
+      userPayouts.forEach(po => {
+        haviTuloOsszeg += Number(po.osszeg || po.eredeti_osszeg || 0);
+      });
+
+      let payoutDisplay = '-';
+      if (haviTuloOsszeg > 0) {
+        payoutDisplay = `<span class="fw-bold text-success">${haviTuloOsszeg.toLocaleString('hu-HU')} Ft</span>`;
+      }
+
+      bodyHtml += `<tr onclick="selectPayrollRow(this)">
+        <td class="col-payroll-name" title="${escapeHtml(p.nev || p.email)}">${escapeHtml(p.nev || p.email)}</td>
+        <td class="text-muted">${evesKeret}</td>
+        <td class="fw-bold ${megKivehetoSz === 0 ? 'text-danger' : 'text-primary'}">${megKivehetoSz}</td>
+        <td class="fw-bold ${megKivehetoTsz === 0 ? 'text-danger' : 'text-secondary'}">${megKivehetoTsz}</td>
+        
+        <td class="${haviSz > 0 ? 'fw-bold text-primary' : 'text-muted'}">${haviSz || '-'}</td>
+        <td class="${haviB > 0 ? 'fw-bold text-danger' : 'text-muted'}">${haviB || '-'}</td>
+        <td class="${haviApa > 0 ? 'fw-bold text-info' : 'text-muted'}">${haviApa || '-'}</td>
+        <td class="${haviFn > 0 ? 'fw-bold text-warning' : 'text-muted'}">${haviFn || '-'}</td>
+        <td class="${haviTsz > 0 ? 'fw-bold text-secondary' : 'text-muted'}">${haviTsz || '-'}</td>
+        <td class="${haviCs > 0 ? 'fw-bold text-success' : 'text-muted'}">${haviCs || '-'}</td>
+        
+        <td class="small">${payoutDisplay}</td>
+      `;
+
+      // 🎯 5. NAPOK CELLÁI: HÉTVÉGE ÉS ÜNNEPNAP IS MEGKAPJA A WEEKEND-CELL OSZTÁLYT
+      for (let i = 0; i < daysInMonth; i++) {
+        const dateStr = `${yearStr}-${String(month).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`;
+        const d = new Date(year, month - 1, i + 1).getDay();
+        const isWeekend = (d === 0 || d === 6);
+        const isHoliday = isHolidayDate(dateStr);
+        const isNonWorkDay = isWeekend || isHoliday;
+
+        let rawM = matrix[i] || '';
+        const isPendingCell = rawM.endsWith('*');
+        const m = isPendingCell ? rawM.slice(0, -1) : rawM;
+
+        let tdClass = isNonWorkDay ? 'weekend-cell' : '';
+        let badgeHtml = '';
+
+        if (m) {
+          const cfg = ABSENCE_RENDER_MAP[m] || { bg: '#0284c7', text: '#ffffff' };
+          const pendingStyle = isPendingCell ? 'border: 1px dashed #f59e0b; opacity: 0.85;' : '';
+          badgeHtml = `
+            <span class="gantt-badge" style="background-color: ${cfg.bg}; color: ${cfg.text}; ${pendingStyle} width: 22px; height: 18px; line-height: 18px; display: inline-block; margin: 0 auto;">
+              ${m}
+            </span>
+          `;
+        }
+
+        bodyHtml += `<td class="${tdClass}">${badgeHtml}</td>`;
+      }
+
+      bodyHtml += `</tr>`;
+    });
+
+    tbody.innerHTML = bodyHtml || '<tr><td colspan="45" class="text-muted py-4">Nincs megjeleníthető adat.</td></tr>';
+
+  } catch (err) {
+    console.error("Bérfejtés hiba:", err);
+    tbody.innerHTML = `<tr><td colspan="45" class="text-danger py-4 fw-bold">Hiba történt a generáláskor: ${err.message}</td></tr>`;
+  }
 }
 
   function exportPayrollToCSV() {
@@ -8691,6 +8949,19 @@ function getWeekdayOvertimeBreakdown(userWorkLogs, dailyLimit = 8, validityDays 
   });
 
   return overtimeDays;
+}
+
+function selectPayrollRow(row) {
+  const isSelected = row.classList.contains('payroll-row-selected');
+  const tbody = row.closest('tbody');
+  
+  if (tbody) {
+    tbody.querySelectorAll('tr').forEach(r => r.classList.remove('payroll-row-selected'));
+  }
+  
+  if (!isSelected) {
+    row.classList.add('payroll-row-selected');
+  }
 }
 
 
