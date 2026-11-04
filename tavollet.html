@@ -391,6 +391,13 @@
   .badge-a  { background-color: #0284c7 !important; color: #ffffff !important; }
   .badge-fn { background-color: #ffc107 !important; color: #000000 !important; }
   .badge-ho { background-color: #f97316 !important; color: #ffffff !important; }
+  /* Munkatárs fix szabadnapja (pl. minden péntek): halvány, ferdén vonalkázott háttér */
+  td.personal-off-cell,
+  .payroll-scroll td.personal-off-cell {
+    background-color: #f1f5f9 !important;
+    background-image: repeating-linear-gradient(45deg, rgba(100,116,139,0.18) 0 2px, transparent 2px 7px) !important;
+  }
+
   /* Jelölések: soha ne törjön több sorba (pl. EHO / RHO) */
   .gantt-badge, .matrix-badge, .absence-badge {
     white-space: nowrap !important;
@@ -1993,12 +2000,27 @@
           <div class="row g-2 mb-3">
             <div class="col-md-3">
               <label class="form-label small fw-bold">Napi Keret (óra) <span class="text-danger">*</span></label>
-              <select class="form-select form-select-sm fw-bold border-primary" id="editUserNapiLimit" required>
+              <select class="form-select form-select-sm fw-bold border-primary" id="editUserNapiLimit" required onchange="toggleWorkHoursDate()">
                 <option value="8">8 óra (100%)</option>
+                <option value="7">7 óra (87,5%)</option>
                 <option value="6">6 óra (75%)</option>
+                <option value="5">5 óra (62,5%)</option>
                 <option value="4">4 óra (50%)</option>
                 <option value="2">2 óra (25%)</option>
               </select>
+              <label class="form-label small fw-bold mt-2 mb-1">Fix szabadnap (nem dolgozik)</label>
+              <div class="d-flex flex-wrap gap-2" id="editUserOffDays">
+                <div class="form-check form-check-inline m-0"><input class="form-check-input" type="checkbox" value="1" id="offDay1" onchange="toggleWorkHoursDate()"><label class="form-check-label" for="offDay1">H</label></div>
+                <div class="form-check form-check-inline m-0"><input class="form-check-input" type="checkbox" value="2" id="offDay2" onchange="toggleWorkHoursDate()"><label class="form-check-label" for="offDay2">K</label></div>
+                <div class="form-check form-check-inline m-0"><input class="form-check-input" type="checkbox" value="3" id="offDay3" onchange="toggleWorkHoursDate()"><label class="form-check-label" for="offDay3">Sze</label></div>
+                <div class="form-check form-check-inline m-0"><input class="form-check-input" type="checkbox" value="4" id="offDay4" onchange="toggleWorkHoursDate()"><label class="form-check-label" for="offDay4">Cs</label></div>
+                <div class="form-check form-check-inline m-0"><input class="form-check-input" type="checkbox" value="5" id="offDay5" onchange="toggleWorkHoursDate()"><label class="form-check-label" for="offDay5">P</label></div>
+              </div>
+              <div id="editUserNapiLimitDateWrap" class="hidden mt-2">
+                <label class="form-label small fw-bold text-danger mb-0" for="editUserNapiLimitFrom">Változás érvényes ettől *</label>
+                <input type="date" class="form-control form-control-sm border-danger" id="editUserNapiLimitFrom">
+              </div>
+              <div id="editUserWorkHoursHistory" class="small text-muted mt-1"></div>
             </div>
             <div class="col-md-3">
               <label class="form-label small fw-bold">Idei Éves Keret (nap)</label>
@@ -2552,6 +2574,45 @@ async function initSessionGuard() {
   sgCheckVersion();
 }
 
+function getSelectedOffDays() {
+  return [1, 2, 3, 4, 5].filter(n => document.getElementById('offDay' + n)?.checked).join(',');
+}
+
+// Admin: munkaidő-változás dátummező megjelenítése
+function toggleWorkHoursDate() {
+  const sel = document.getElementById('editUserNapiLimit');
+  const wrap = document.getElementById('editUserNapiLimitDateWrap');
+  if (!sel || !wrap) return;
+  const changed = Number(sel.value) !== Number(window._editOrigWorkHours) || getSelectedOffDays() !== (window._editOrigOffDays || '');
+  wrap.classList.toggle('hidden', !changed);
+}
+
+// Admin: munkaidő-előzmény listázása a szerkesztő ablakban
+function renderWorkHoursHistory(email) {
+  const box = document.getElementById('editUserWorkHoursHistory');
+  if (!box) return;
+  const rows = window.workHoursHistory.get(hoNorm(email)) || [];
+  if (!rows.length) { box.innerHTML = ''; return; }
+  const fmt = (d) => d === '2000-01-01' ? 'kezdettől' : d.replace(/-/g, '.') + '.';
+  box.innerHTML = '<div class="fw-bold mt-1">Munkarend-előzmény:</div>' + rows.map(r =>
+    `<div class="d-flex justify-content-between align-items-center">
+       <span>${fmt(r.tol)} → <strong>${r.ora} óra</strong>${r.off ? ' · szabadnap: ' + r.off.split(',').map(n => ['', 'H', 'K', 'Sze', 'Cs', 'P', 'Szo', 'V'][Number(n)]).join(', ') : ''}</span>
+       <button type="button" class="btn btn-link btn-sm text-danger p-0" title="Bejegyzés törlése" onclick="deleteWorkHoursEntry('${r.id}', '${escapeHtml(email)}')"><i class="bi bi-x-circle"></i></button>
+     </div>`).join('');
+}
+
+async function deleteWorkHoursEntry(id, email) {
+  try {
+    const { error } = await supabaseClient.from('munkaido_elozmeny').delete().eq('id', id);
+    if (error) throw error;
+    await loadWorkHoursHistory();
+    renderWorkHoursHistory(email);
+    showToast('Munkaidő-bejegyzés törölve.', 'success');
+  } catch (e) {
+    showToast('Törlési hiba: ' + e.message, 'danger');
+  }
+}
+
 // Admin: véleményezendők listájának szűrése
 function filterCreativeExtraList() {
   const q = hoNorm(document.getElementById('cfgCreativeExtraSearch')?.value || '');
@@ -2593,6 +2654,72 @@ function roleOf(p) {
 }
 
 function isBossUser(p) { return roleOf(p) === 'boss'; }
+
+// ⏱️ MUNKAIDŐ-ELŐZMÉNY: a napi munkaidő dátumhoz kötve (pl. 6 óra -> 7 óra egy adott naptól)
+window.workHoursHistory = new Map(); // email -> [{tol:'YYYY-MM-DD', ora:Number, id}]
+async function loadWorkHoursHistory() {
+  try {
+    const { data, error } = await supabaseClient
+      .from('munkaido_elozmeny')
+      .select('*')
+      .order('ervenyes_tol', { ascending: true });
+    if (error) throw error;
+    const map = new Map();
+    (data || []).forEach(r => {
+      const key = hoNorm(r.email);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push({ id: r.id, tol: String(r.ervenyes_tol).substring(0, 10), ora: Number(r.napi_ora), off: String(r.szabad_napok || '') });
+    });
+    window.workHoursHistory = map;
+  } catch (e) {
+    console.warn('Munkaidő-előzmény betöltési hiba (ha a tábla még nincs létrehozva, a profil értéke számít):', e.message || e);
+  }
+}
+
+// Az adott napon érvényes napi munkaidő
+function getDailyLimitFor(profileOrEmail, ymd) {
+  const prof = typeof profileOrEmail === 'string' ? { email: profileOrEmail } : (profileOrEmail || {});
+  const fallback = Number(prof.munkaido_keret ?? prof.napi_munkaido ?? prof.orakeret ?? prof.dailyWorkLimit) || 8;
+  const rows = window.workHoursHistory.get(hoNorm(prof.email));
+  if (!rows || !rows.length || !ymd) return fallback;
+  let val = rows[0].ora; // a legelső bejegyzés előtti napokra is a legkorábbi ismert érték
+  for (const r of rows) {
+    if (r.tol <= ymd) val = r.ora; else break;
+  }
+  return Number(val) || fallback;
+}
+
+// 📅 FIX SZABADNAP(OK): ISO hét napjai (1 = hétfő ... 5 = péntek), dátum szerint követve
+function getOffDaysFor(profileOrEmail, ymd) {
+  const email = typeof profileOrEmail === 'string' ? profileOrEmail : profileOrEmail?.email;
+  const rows = window.workHoursHistory.get(hoNorm(email));
+  if (!rows || !rows.length) return new Set();
+  let off = rows[0].off;
+  if (ymd) {
+    for (const r of rows) {
+      if (r.tol <= ymd) off = r.off; else break;
+    }
+  }
+  return new Set(String(off || '').split(',').map(x => Number(x)).filter(n => n >= 1 && n <= 7));
+}
+
+function isOffDayFor(profileOrEmail, ymd) {
+  if (!ymd) return false;
+  const d = hoParseDate(ymd);
+  if (!d) return false;
+  const iso = d.getDay() === 0 ? 7 : d.getDay();
+  return getOffDaysFor(profileOrEmail, ymd).has(iso);
+}
+
+// Személyre szabott munkanap: általános munkanap ÉS nem a munkatárs fix szabadnapja
+function isPersonWorkday(profileOrEmail, ymd) {
+  return hoIsWorkday(ymd) && !isOffDayFor(profileOrEmail, ymd);
+}
+
+// Túlóra-számításhoz: a fix szabadnapon 0 óra az elvárt munkaidő (minden ledolgozott óra túlmunka)
+function dailyLimitResolver(profile) {
+  return (ymd) => isOffDayFor(profile, ymd) ? 0 : getDailyLimitFor(profile, ymd);
+}
 
 // Inaktív vagy már kilépett munkatárs (statisztikához megmarad, a napi nézetekből kimarad)
 function isInactiveProfile(p) {
@@ -2703,6 +2830,7 @@ async function loadAppSettings() {
   } catch (e) { console.warn('Profil-beállítások betöltési hiba:', e); }
 
   await loadMySubstitutions();
+  await loadWorkHoursHistory();
 }
 
 function getCreativeReviewerEmail() { return window.appSettings.creativeReviewerEmail || ''; }
@@ -3066,7 +3194,8 @@ function buildDecisionEmailHtml(dolgozoNeve, statusz, tipus, kezdoDatum, vegDatu
       otRes.data || [],
       reqRes.data || [],
       decRes.data || [],
-      profile.csusztathato_kezdo || 0 
+      profile.csusztathato_kezdo || 0,
+      dailyLimitResolver(profile)
     );
 
     const csusztathatoEl = document.getElementById('uiCsusztathato');
@@ -3196,7 +3325,6 @@ async function loadMyRequests() {
     renderHODashboard();
 
     // 🎯 3. TÚLMUNKA / CSÚSZTATHATÓ EGYENLEG KISZÁMÍTÁSA
-    const myKeret = Number(currentUserProfile.munkaido_keret ?? currentUserProfile.napi_munkaido ?? currentUserProfile.orakeret ?? currentUserProfile.dailyWorkLimit) || 8;
     const myInitial = Number(currentUserProfile.csusztathato_kezdo) || 0;
 
     const otStats = calculateUserOvertimeBalances(
@@ -3205,7 +3333,7 @@ async function loadMyRequests() {
       userRequestsCache,
       userDecisions,
       myInitial,
-      myKeret
+      dailyLimitResolver(currentUserProfile)
     );
 
     console.log("[Saját Pult] Kiszámolt csúsztatható egyenleg:", otStats.osszesCsusztathato);
@@ -3379,18 +3507,18 @@ function hoMondayOf(date) {
   return d;
 }
 
-function hoWeekWorkdays(monday) {
+function hoWeekWorkdays(monday, email) {
   const out = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(monday.getTime());
     d.setDate(d.getDate() + i);
     const ymd = hoYMD(d);
-    if (hoIsWorkday(ymd)) out.push(ymd);
+    if (hoIsWorkday(ymd) && !(email && typeof isOffDayFor === 'function' && isOffDayFor(email, ymd))) out.push(ymd);
   }
   return out;
 }
 
-function hoWorkdaysBetween(startStr, endStr) {
+function hoWorkdaysBetween(startStr, endStr, email) {
   const s = hoParseDate(startStr);
   const e = hoParseDate(endStr || startStr) || s;
   if (!s || !e) return [];
@@ -3398,7 +3526,7 @@ function hoWorkdaysBetween(startStr, endStr) {
   const cur = new Date(s.getTime());
   while (cur <= e) {
     const ymd = hoYMD(cur);
-    if (hoIsWorkday(ymd)) out.push(ymd);
+    if (hoIsWorkday(ymd) && !(email && typeof isOffDayFor === 'function' && isOffDayFor(email, ymd))) out.push(ymd);
     cur.setDate(cur.getDate() + 1);
   }
   return out;
@@ -3421,13 +3549,13 @@ function hoWeeklyMaxFor(profile) {
 
 // Egy adott hét HO kerete
 function calcWeeklyHOAllowance(monday, requests, profile, extraAbsenceDays = []) {
-  const workdays = hoWeekWorkdays(monday);
+  const workdays = hoWeekWorkdays(monday, profile?.email);
   const absence = new Set(extraAbsenceDays.filter(d => workdays.includes(d)));
   const regularHO = new Set();
   const mine = hoUserRequests(requests, profile?.email);
 
   mine.forEach(r => {
-    const days = hoWorkdaysBetween(r.kezdo_datum || r.datum, r.veg_datum || r.kezdo_datum || r.datum)
+    const days = hoWorkdaysBetween(r.kezdo_datum || r.datum, r.veg_datum || r.kezdo_datum || r.datum, profile?.email)
       .filter(d => workdays.includes(d));
     if (!days.length) return;
     if (isOfficeReducingAbsence(r.tipus)) days.forEach(d => absence.add(d));
@@ -3468,8 +3596,8 @@ function hoFmtWeek(monday) {
 
 // Sima HO: heti keret ellenőrzése
 function checkWeeklyHOConditions(startStr, endStr, requests, profile) {
-  const reqDays = hoWorkdaysBetween(startStr, endStr);
-  if (!reqDays.length) return { ok: false, reason: 'A választott időszakban nincs munkanap.' };
+  const reqDays = hoWorkdaysBetween(startStr, endStr, profile?.email);
+  if (!reqDays.length) return { ok: false, reason: 'A választott időszakban nincs munkanapod.' };
 
   for (const week of hoGroupByWeek(reqDays)) {
     const a = calcWeeklyHOAllowance(week.monday, requests, profile);
@@ -3502,15 +3630,15 @@ function calcSickHOUsage(requests, profile, refYMD) {
   let used = 0;
   hoUserRequests(requests, profile?.email).forEach(r => {
     if (getHOKind(r.tipus) !== 'sick') return;
-    used += hoWorkdaysBetween(r.kezdo_datum, r.veg_datum || r.kezdo_datum).filter(d => hoHalfYearKey(d) === key).length;
+    used += hoWorkdaysBetween(r.kezdo_datum, r.veg_datum || r.kezdo_datum, profile?.email).filter(d => hoHalfYearKey(d) === key).length;
   });
   return { key, used, remaining: Math.max(0, HO_SICK_MAX_PER_HALFYEAR - used) };
 }
 
 // Rendkívüli HO: félévente összesen max. 3 nap
 function checkSickHOConditions(startStr, endStr, requests, profile) {
-  const reqDays = hoWorkdaysBetween(startStr, endStr);
-  if (!reqDays.length) return { ok: false, reason: 'A választott időszakban nincs munkanap.' };
+  const reqDays = hoWorkdaysBetween(startStr, endStr, profile?.email);
+  if (!reqDays.length) return { ok: false, reason: 'A választott időszakban nincs munkanapod.' };
 
   const byHalf = {};
   reqDays.forEach(d => { const k = hoHalfYearKey(d); byHalf[k] = (byHalf[k] || 0) + 1; });
@@ -3538,8 +3666,8 @@ function hoDaysUntil(startStr) {
 }
 
 // Egyedi HO: legalább 15 nappal előre
-function checkEgyediHOConditions(startStr, endStr) {
-  if (!hoWorkdaysBetween(startStr, endStr).length) return { ok: false, reason: 'A választott időszakban nincs munkanap.' };
+function checkEgyediHOConditions(startStr, endStr, profile) {
+  if (!hoWorkdaysBetween(startStr, endStr, profile?.email).length) return { ok: false, reason: 'A választott időszakban nincs munkanapod.' };
   const diff = hoDaysUntil(startStr);
   if (diff < HO_EGYEDI_ADVANCE_DAYS) {
     return { ok: false, reason: `Egyedi HO-t legalább ${HO_EGYEDI_ADVANCE_DAYS} nappal korábban kell kérvényezni (a választott kezdőnap ${Math.max(diff, 0)} nap múlva van).` };
@@ -3551,13 +3679,13 @@ function checkHORequest(tipus, startStr, endStr, requests, profile) {
   const kind = getHOKind(tipus);
   if (kind === 'regular') return checkWeeklyHOConditions(startStr, endStr, requests, profile);
   if (kind === 'sick') return checkSickHOConditions(startStr, endStr, requests, profile);
-  if (kind === 'egyedi') return checkEgyediHOConditions(startStr, endStr);
+  if (kind === 'egyedi') return checkEgyediHOConditions(startStr, endStr, profile);
   return { ok: true, reason: '' };
 }
 
 // Új szabadság után megmarad-e a 3 irodai nap a már rögzített sima HO-k mellett?
 function findHOConflictsAfterAbsence(startStr, endStr, requests, profile) {
-  const newDays = hoWorkdaysBetween(startStr, endStr);
+  const newDays = hoWorkdaysBetween(startStr, endStr, profile?.email);
   const conflicts = [];
   hoGroupByWeek(newDays).forEach(week => {
     const a = calcWeeklyHOAllowance(week.monday, requests, profile, week.days);
@@ -4693,6 +4821,13 @@ async function executeSubmitCreativeOpinion() {
 
   // Munkaidő keret / Napi limit beállítása
   setVal('editUserNapiLimit', user.munkaido_keret || user.napi_limit || 8);
+  window._editOrigWorkHours = Number(user.munkaido_keret || user.napi_limit || 8);
+  const curOff = getOffDaysFor(user, getLocalYMD());
+  window._editOrigOffDays = Array.from(curOff).sort().join(',');
+  [1, 2, 3, 4, 5].forEach(n => { const cb = document.getElementById('offDay' + n); if (cb) cb.checked = curOff.has(n); });
+  setVal('editUserNapiLimitFrom', getLocalYMD());
+  toggleWorkHoursDate();
+  renderWorkHoursHistory(user.email);
   setVal('editUserEvesKeret', user.eves_keret || 20);
   setVal('editUserTavalyiKeret', user.tavalyi_keret || 0);
   setVal('editUserHoKeret', hoWeeklyMaxFor(user));
@@ -4777,7 +4912,34 @@ async function saveEditUser(event) {
 
   console.log("Supabase-nek küldendő teljes objektum:", updatedData);
 
+  // ⏱️ Munkaidő-változás: előzmény rögzítése a megadott dátumtól
+  const newWorkHours = updatedData.munkaido_keret;
+  const oldWorkHours = Number(window._editOrigWorkHours) || 8;
+  const workHoursFrom = document.getElementById('editUserNapiLimitFrom')?.value || '';
+  const newOffDays = getSelectedOffDays();
+  const oldOffDays = window._editOrigOffDays || '';
+  const scheduleChanged = newWorkHours !== oldWorkHours || newOffDays !== oldOffDays;
+  if (scheduleChanged && !workHoursFrom) {
+    showToast("Add meg, mettől érvényes a munkaidő / szabadnap változás!", "warning");
+    if (btn) btn.disabled = false;
+    return;
+  }
+
   try {
+    if (scheduleChanged) {
+      const histEmail = (document.getElementById('editUserEmail')?.value || document.getElementById('editOriginalEmail')?.value || '').trim().toLowerCase();
+      const existing = window.workHoursHistory.get(hoNorm(histEmail)) || [];
+      const rows = [];
+      // Első változáskor a korábbi munkaidőt is rögzítjük kiinduló értékként
+      if (!existing.length) rows.push({ email: histEmail, ervenyes_tol: '2000-01-01', napi_ora: oldWorkHours, szabad_napok: oldOffDays });
+      rows.push({ email: histEmail, ervenyes_tol: workHoursFrom, napi_ora: newWorkHours, szabad_napok: newOffDays });
+      const { error: histErr } = await supabaseClient
+        .from('munkaido_elozmeny')
+        .upsert(rows, { onConflict: 'email,ervenyes_tol' });
+      if (histErr) throw new Error('Munkaidő-előzmény mentése sikertelen: ' + histErr.message);
+      await loadWorkHoursHistory();
+    }
+
     const { error } = await supabaseClient
       .from('profiles')
       .update(updatedData)
@@ -5133,7 +5295,7 @@ function renderGlobalTimeline(data) {
 
         const reqEnd = r.veg_datum || r.kezdo_datum;
         // Hétvégén és munkaszüneti napon nem jelölünk távollétet
-        return isUserMatch && hoIsWorkday(dateStr) && dateStr >= r.kezdo_datum && dateStr <= reqEnd;
+        return isUserMatch && isPersonWorkday(emp, dateStr) && dateStr >= r.kezdo_datum && dateStr <= reqEnd;
       });
 
       let cellContent = '';
@@ -5142,6 +5304,11 @@ function renderGlobalTimeline(data) {
 
       if (isWeekend) cellClasses.push('weekend-cell');
       if (isToday) cellClasses.push('today-cell');
+      const isPersonalOff = !isWeekend && hoIsWorkday(dateStr) && isOffDayFor(emp, dateStr);
+      if (isPersonalOff) {
+        cellClasses.push('personal-off-cell');
+        tdAttributes = `style="text-align: center; vertical-align: middle; padding: 1px;" title="Fix szabadnap (nem dolgozik)"`;
+      }
 
       if (dayReqs.length > 0) {
         let displayInfos = [];
@@ -5237,12 +5404,12 @@ function renderGlobalTimeline(data) {
     const isSunday = currentDate.getDay() === 0;
     const isHoliday = holidayDates.includes(dateStr);
 
-    const isWorkingDay = hoIsWorkday(dateStr);
+    const isWorkingDay = isPersonWorkday(currentUserProfile, dateStr);
 
     const isTodayClass = (dateStr === todayStr) ? 'today' : '';
     const nonWorkingClass = !isWorkingDay ? 'other-month' : '';
     
-    const tooltipText = isHoliday ? 'Ünnepnap / Munkaszüneti nap' : (!isWorkingDay ? 'Hétvége' : '');
+    const tooltipText = isHoliday ? 'Ünnepnap / Munkaszüneti nap' : (!isWorkingDay ? (hoIsWorkday(dateStr) ? 'Fix szabadnap' : 'Hétvége') : '');
     const titleAttr = tooltipText ? `title="${tooltipText}"` : '';
 
     let badges = '';
@@ -5550,7 +5717,7 @@ function canSubmitPayoutFor(submitter, target) {
   return false;
 }
 
-function calculateWorkingDays(startDateStr, endDateStr) {
+function calculateWorkingDays(startDateStr, endDateStr, personEmail) {
   if (!startDateStr) return 0;
   
   const cleanStart = String(startDateStr).split('T')[0].split(' ')[0].trim().replace(/\./g, '-').replace(/\//g, '-');
@@ -5579,7 +5746,8 @@ function calculateWorkingDays(startDateStr, endDateStr) {
 
     const isHoliday = (typeof holidayDates !== 'undefined') && Array.isArray(holidayDates) && holidayDates.includes(dateStr);
 
-    if (dayOfWeek !== 0 && dayOfWeek !== 6 && !isHoliday) {
+    // Munkanap: hétköznap, ami nem ünnep, VAGY áthelyezett munkanap; a munkatárs fix szabadnapja nem számít
+    if (personEmail ? isPersonWorkday(personEmail, dateStr) : hoIsWorkday(dateStr)) {
       count++;
     }
     curr.setDate(curr.getDate() + 1);
@@ -5605,7 +5773,10 @@ function filterTeamBalancesByGroup() {
 
 function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, overtimeDecisions, initialHours = 0, dailyWorkLimit = 8) {
   let remainingInitial = Number(initialHours) || 0;
-  const standardDailyLimit = Number(dailyWorkLimit) || 8;
+  // A napi munkaidő lehet fix szám, vagy dátum szerint változó (munkaidő-előzmény)
+  const limitFor = (typeof dailyWorkLimit === 'function')
+    ? (ymd) => { const v = Number(dailyWorkLimit(ymd)); return isNaN(v) ? 8 : v; } // 0 = fix szabadnap
+    : () => Number(dailyWorkLimit) || 8;
 
   if (!userEmail) {
     return { 
@@ -5629,9 +5800,9 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
   today.setHours(0, 0, 0, 0);
 
   const cleanHolidays = (typeof holidayDates !== 'undefined' && Array.isArray(holidayDates)) ? holidayDates : [];
-  const cleanShiftedWorkdays = (typeof shiftedWorkdays !== 'undefined' && Array.isArray(shiftedWorkdays)) 
-    ? shiftedWorkdays 
-    : ['2026-08-08']; 
+  const cleanShiftedWorkdays = (Array.isArray(window.hoWorkSaturdays) && window.hoWorkSaturdays.length)
+    ? window.hoWorkSaturdays
+    : ['2026-01-10', '2026-08-08'];
 
   const dailyLogsMap = {};
 
@@ -5717,7 +5888,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
         }
       }
     } else {
-      leaveHrs = standardDailyLimit;
+      leaveHrs = null; // egész napos távollét: az adott napon érvényes munkaidő
     }
 
     let curr = new Date(startStr + 'T12:00:00');
@@ -5745,7 +5916,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
             weekendHours: 0
           };
         }
-        dailyLogsMap[dStr].leaveHours = (dailyLogsMap[dStr].leaveHours || 0) + leaveHrs;
+        dailyLogsMap[dStr].leaveHours = (dailyLogsMap[dStr].leaveHours || 0) + (leaveHrs === null ? limitFor(dStr) : leaveHrs);
       }
       curr.setDate(curr.getDate() + 1);
     }
@@ -5800,7 +5971,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
         // Munkanapon: ha van szabadság (8 óra), az elvárt munkaidő 0 órára csökken,
         // így a ledolgozott órák teljes egészében túlmunkává válnak.
         // Ha részleges csúsztatás volt (pl. 4 óra), az elvárt munka 4 órára csökken.
-        const effectiveDailyLimit = Math.max(0, standardDailyLimit - (dayObj.leaveHours || 0));
+        const effectiveDailyLimit = Math.max(0, limitFor(dayObj.datum) - (dayObj.leaveHours || 0));
         weekdayOvertimeHrs = Math.max(0, dayObj.daytimeHours - effectiveDailyLimit);
       }
     }
@@ -5864,7 +6035,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
         }
       }
 
-      totalUsedHours += (hours > 0 ? hours : standardDailyLimit);
+      totalUsedHours += (hours > 0 ? hours : limitFor(reqStart));
     }
   });
 
@@ -6186,7 +6357,6 @@ async function loadTeamBalances() {
       const maradek = evesKeret - kivettIdei;
       
       // 🎯 RUGALMAS MUNKAIDŐ KERET BEOLVASÁS A PROFILBÓL
-      const userKeret = Number(emp.munkaido_keret ?? emp.napi_munkaido ?? emp.orakeret ?? emp.dailyWorkLimit) || 8;
 
       const otStats = calculateUserOvertimeBalances(
         emp.email, 
@@ -6194,7 +6364,7 @@ async function loadTeamBalances() {
         userRequests, 
         userDecisions, 
         emp.csusztathato_kezdo || 0,
-        userKeret
+        dailyLimitResolver(emp)
       );
 
       return {
@@ -7587,7 +7757,7 @@ async function submitChallenge() {
       if (rawStatus.includes('reject') || rawStatus.includes('elutasit') || rawStatus.includes('visszavon')) return;
 
       if (r.kezdo_datum) {
-        const days = calculateWorkingDays(r.kezdo_datum, r.veg_datum);
+        const days = calculateWorkingDays(r.kezdo_datum, r.veg_datum, userEmail || r.user_email);
         const marker = getLeaveTypeMarker(r.tipus);
 
         if (marker === 'T') {
@@ -7682,13 +7852,13 @@ async function submitChallenge() {
 
     // 🎯 2. SUPABASE 'holidays' TÁBLA FELDOLGOZÁSA
     const dbHolidayDates = new Set();
+    const dbWorkSaturdays = new Set(); // áthelyezett munkanapok (ledolgozós szombatok)
     (holidaysRes?.data || []).forEach(h => {
       const d = cleanYMD(h.datum || h.date || h.nap || h.kezdo_datum);
       const tipus = String(h.tipus || h.type || '').toLowerCase();
-      // Áthelyezett ledolgozós munkanapok kivételével minden ünnepnek/pihenőnapnak minősül
-      if (d && !tipus.includes('munkanap')) {
-        dbHolidayDates.add(d);
-      }
+      if (!d) return;
+      if (tipus.includes('munkanap')) dbWorkSaturdays.add(d);
+      else dbHolidayDates.add(d);
     });
 
     if (typeof window !== 'undefined') {
@@ -7697,6 +7867,7 @@ async function submitChallenge() {
 
     // Ünnepnap-ellenőrző: adatbázis + automatikus naptári munkaszüneti napok fallback
     const isHolidayDate = (dateStr) => {
+      if (dbWorkSaturdays.has(dateStr)) return false;
       if (dbHolidayDates.has(dateStr)) return true;
 
       const parts = String(dateStr).split('-');
@@ -7737,7 +7908,7 @@ async function submitChallenge() {
     for (let i = 1; i <= daysInMonth; i++) {
       const dateStr = `${yearStr}-${String(month).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
       const d = new Date(year, month - 1, i).getDay();
-      const isWeekend = (d === 0 || d === 6);
+      const isWeekend = (d === 0 || d === 6) && !dbWorkSaturdays.has(dateStr);
       const isHoliday = isHolidayDate(dateStr);
       const isNonWorkDay = isWeekend || isHoliday;
 
@@ -7768,8 +7939,8 @@ async function submitChallenge() {
       const end = new Date(eStr + 'T12:00:00');
       while (cur <= end) {
         const day = cur.getDay();
-        const isW = (day === 0 || day === 6);
         const dStr = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`;
+        const isW = (day === 0 || day === 6) && !dbWorkSaturdays.has(dStr);
         const isH = isHolidayDate(dStr);
         if (!isW && !isH) count++;
         cur.setDate(cur.getDate() + 1);
@@ -7869,12 +8040,12 @@ async function submitChallenge() {
           const dDay = currD.getDate();
           const dayOfWeek = currD.getDay();
 
-          const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
           const dateStr = `${dY}-${String(dM).padStart(2,'0')}-${String(dDay).padStart(2,'0')}`;
+          const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6) && !dbWorkSaturdays.has(dateStr);
           const isHoliday = isHolidayDate(dateStr);
 
-          // Csak munkanapokon számoljuk az elszámolt távolléteket
-          if (!isWeekend && !isHoliday) {
+          // Csak munkanapokon számoljuk az elszámolt távolléteket (a munkatárs fix szabadnapja kimarad)
+          if (!isWeekend && !isHoliday && !isOffDayFor(p, dateStr)) {
             if (dY === year && dM === month) {
               if (isApproved) {
                 if (marker === 'SZ') haviSz++;
@@ -7944,7 +8115,7 @@ async function submitChallenge() {
       for (let i = 0; i < daysInMonth; i++) {
         const dateStr = `${yearStr}-${String(month).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`;
         const d = new Date(year, month - 1, i + 1).getDay();
-        const isWeekend = (d === 0 || d === 6);
+        const isWeekend = (d === 0 || d === 6) && !dbWorkSaturdays.has(dateStr);
         const isHoliday = isHolidayDate(dateStr);
         const isNonWorkDay = isWeekend || isHoliday;
 
@@ -7952,7 +8123,8 @@ async function submitChallenge() {
         const isPendingCell = rawM.endsWith('*');
         const m = isPendingCell ? rawM.slice(0, -1) : rawM;
 
-        let tdClass = isNonWorkDay ? 'weekend-cell' : '';
+        const isPersonalOff = !isNonWorkDay && isOffDayFor(p, dateStr);
+        let tdClass = isNonWorkDay ? 'weekend-cell' : (isPersonalOff ? 'personal-off-cell' : '');
         let badgeHtml = '';
 
         if (m) {
@@ -8596,7 +8768,7 @@ async function renderTeamLeaveMatrix() {
             const dateStr = `${dY}-${dM}-${dD}`;
 
             // Hétvégén és munkaszüneti napon nem jelölünk távollétet
-            if (dateStr.startsWith(selectedMonth) && hoIsWorkday(dateStr)) {
+            if (dateStr.startsWith(selectedMonth) && isPersonWorkday(emp, dateStr)) {
               if (!dailyLeaveMap[dateStr]) dailyLeaveMap[dateStr] = [];
               dailyLeaveMap[dateStr].push({ ...l, typeInfo, isPending, isApproved });
             }
@@ -8607,7 +8779,7 @@ async function renderTeamLeaveMatrix() {
         const reqStartYear = startD ? startD.getFullYear() : viewYr;
         if (isApproved && (reqStartYear === viewYr || String(sRaw).includes(String(viewYr)))) {
           if (!startD || startD <= cutoffDate) {
-            let days = Number(l.oraszam ? l.oraszam / (emp.munkaido_keret || 8) : 0);
+            let days = Number(l.oraszam ? l.oraszam / getDailyLimitFor(emp, String(l.kezdo_datum || '').substring(0, 10)) : 0);
 
             if (!days && startD) {
               const actualEndD = endD || startD;
@@ -8617,7 +8789,7 @@ async function renderTeamLeaveMatrix() {
                 let dCount = 0;
                 let currD = new Date(startD.getTime());
                 while (currD <= actualEndD && cutoffDate >= currD) {
-                  if (currD.getDay() !== 0 && currD.getDay() !== 6) dCount++;
+                  if (isPersonWorkday(emp, hoYMD(currD))) dCount++;
                   currD.setDate(currD.getDate() + 1);
                 }
                 days = dCount > 0 ? dCount : 1;
@@ -8728,8 +8900,9 @@ async function renderTeamLeaveMatrix() {
             </div>`;
         }
 
-        const bgClass = isPassiveDay ? 'bg-secondary-subtle' : (isSun ? 'bg-secondary-subtle' : (isSat ? 'bg-light' : ''));
-        html += `<td class="matrix-day-col ${bgClass}">${cellContent}</td>`;
+        const isPersonalOff = !isSun && !isSat && hoIsWorkday(dStr) && isOffDayFor(emp, dStr);
+        const bgClass = isPassiveDay ? 'bg-secondary-subtle' : (isSun ? 'bg-secondary-subtle' : (isSat ? 'bg-light' : (isPersonalOff ? 'personal-off-cell' : '')));
+        html += `<td class="matrix-day-col ${bgClass}"${isPersonalOff ? ' title="Fix szabadnap (nem dolgozik)"' : ''}>${cellContent}</td>`;
       }
 
       for (let d = lastDay + 1; d <= 31; d++) {
