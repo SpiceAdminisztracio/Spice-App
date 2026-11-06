@@ -7731,50 +7731,73 @@ async function submitChallenge() {
     };
   }
 
-  function calculateUserLeaveStats(userEmail, requestsList, userName = '') {
+  // Szabadság-statisztika: NAPRA PONTOSAN, a vizsgált év munkanapjai alapján
+  // (ugyanaz a szabály, mint a "kiíratlan szabadság" SQL lekérdezésben):
+  // - csak a vizsgált évre eső napok számítanak (évhatáron átnyúló szabadság szétválik)
+  // - munkanap: hétköznap, nem ünnep/pihenőnap, VAGY ledolgozós szombat; a munkatárs fix szabadnapja nem
+  // - a tavalyi szabadságból is csak a vizsgált évben kivett napok fogynak
+  // - jóváhagyott ÉS függőben lévő kérelem is számít, elutasított / visszavont nem
+  function calculateUserLeaveStats(userEmail, requestsList, userName = '', yearParam = null) {
     if ((!userEmail && !userName) || !requestsList) return { kivettIdei: 0, kivettTavalyi: 0, hoKivett: 0, betegKivett: 0 };
 
     const targetEmail = normalizeStr(userEmail);
     const targetName = normalizeStr(userName);
-    let kivettIdei = 0;
-    let kivettTavalyi = 0;
-    let hoKivett = 0;
-    let betegKivett = 0;
-
     const now = new Date();
-    const currentYearStr = String(now.getFullYear());
+    const year = Number(yearParam) || now.getFullYear();
+    const yearStart = `${year}-01-01`;
+    const yearEnd = `${year}-12-31`;
     const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const personKey = userEmail || '';
+
+    const ideiDays = new Set();
+    const tavalyiDays = new Set();
+    const betegDays = new Set();
+    const hoDays = new Set();
+
+    const toYMD = (v) => {
+      if (!v) return '';
+      const p = String(v).split('T')[0].split(' ')[0].trim().replace(/[\.\/]/g, '-').split('-').filter(Boolean);
+      return p.length === 3 ? `${p[0]}-${p[1].padStart(2, '0')}-${p[2].padStart(2, '0')}` : '';
+    };
 
     requestsList.forEach(r => {
       const reqEmail = normalizeStr(r.user_email || r.email || r.munkatars_email);
       const reqName = normalizeStr(r.nev || r.user_name);
-
-      const isMatch = (targetEmail && reqEmail && reqEmail === targetEmail) || 
+      const isMatch = (targetEmail && reqEmail && reqEmail === targetEmail) ||
                       (targetName && reqName && reqName === targetName);
       if (!isMatch) return;
 
       const rawStatus = normalizeStr(r.status);
-      if (rawStatus.includes('reject') || rawStatus.includes('elutasit') || rawStatus.includes('visszavon')) return;
+      if (rawStatus.includes('reject') || rawStatus.includes('elutasit') || rawStatus.includes('visszavon') || rawStatus.includes('cancel')) return;
 
-      if (r.kezdo_datum) {
-        const days = calculateWorkingDays(r.kezdo_datum, r.veg_datum, userEmail || r.user_email);
-        const marker = getLeaveTypeMarker(r.tipus);
+      const start = toYMD(r.kezdo_datum);
+      const end = toYMD(r.veg_datum || r.kezdo_datum) || start;
+      if (!start) return;
 
-        if (marker === 'T') {
-          kivettTavalyi += days;
-        } else if (marker === 'SZ' && r.kezdo_datum.startsWith(currentYearStr)) {
-          kivettIdei += days;
-        } else if (marker === 'B') {
-          betegKivett += days;
-        }
+      const marker = getLeaveTypeMarker(r.tipus);
+      const target = marker === 'SZ' ? ideiDays : marker === 'T' ? tavalyiDays : marker === 'B' ? betegDays : marker === 'HO' ? hoDays : null;
+      if (!target) return;
 
-        if (marker === 'HO' && r.kezdo_datum.startsWith(currentMonthStr)) {
-          hoKivett += days;
-        }
+      const from = marker === 'HO' ? start : (start < yearStart ? yearStart : start);
+      const to = marker === 'HO' ? end : (end > yearEnd ? yearEnd : end);
+      if (from > to) return;
+
+      const cur = hoParseDate(from);
+      const last = hoParseDate(to);
+      while (cur <= last) {
+        const ymd = hoYMD(cur);
+        const ok = personKey ? isPersonWorkday(personKey, ymd) : hoIsWorkday(ymd);
+        if (ok && (marker !== 'HO' || ymd.startsWith(currentMonthStr))) target.add(ymd);
+        cur.setDate(cur.getDate() + 1);
       }
     });
 
-    return { kivettIdei, kivettTavalyi, hoKivett, betegKivett };
+    return {
+      kivettIdei: ideiDays.size,
+      kivettTavalyi: tavalyiDays.size,
+      hoKivett: hoDays.size,
+      betegKivett: betegDays.size
+    };
   }
 
   function escapeHtml(t) {
@@ -7997,7 +8020,7 @@ async function submitChallenge() {
       const evesKeret = Number(p.eves_keret) || 0;
       const tavalyiKeret = Number(p.tavalyi_keret) || 0;
 
-      const exactUserStats = calculateUserLeaveStats(p.email, leavesUpToMonth, p.nev);
+      const exactUserStats = calculateUserLeaveStats(p.email, leavesUpToMonth, p.nev, year);
       const megKivehetoSz = Math.max(0, evesKeret - exactUserStats.kivettIdei);
       const megKivehetoTsz = Math.max(0, tavalyiKeret - exactUserStats.kivettTavalyi);
 
