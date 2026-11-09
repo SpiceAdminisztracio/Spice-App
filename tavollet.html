@@ -2336,6 +2336,8 @@
   document.addEventListener("DOMContentLoaded", async function() {
   // 1. Alapvető adatok, felhasználói profil, helyettesítő és csoport szűrő lista betöltése
   await loadHolidays();
+  // A munkarend-előzményt (napi munkaidő változása, fix szabadnap) a Saját pult számítása ELŐTT kell betölteni
+  await loadWorkHoursHistory();
   await loadUserData();
   if (currentUserProfile) {
     await loadAppSettings();
