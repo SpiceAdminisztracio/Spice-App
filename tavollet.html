@@ -1148,17 +1148,16 @@
           </div>
 
           <div class="alert alert-warning hidden" id="rendkivuliContainer">
-            <strong>⚠️ Rendkívüli Kérelem!</strong> A kért kezdési időpont kevesebb, mint 15 napra van. Ez rendkívüli indoklást igényel.
-            <div class="form-check my-2">
+            <strong>⚠️ Rendkívüli Kérelem!</strong> A kért kezdési időpont kevesebb, mint 15 napra van. Az indoklást az alábbi Megjegyzés / Indoklás mezőbe írd.
+            <div class="form-check mt-2 mb-0">
               <input class="form-check-input" type="checkbox" id="isRendkivuli" onchange="validateDates()">
               <label class="form-check-label" for="isRendkivuli">Tudomásul veszem, hogy ez rendkívüli kérelem.</label>
             </div>
-            <input type="text" class="form-control" id="rendkivuliOk" placeholder="Kérlek indokold meg..." oninput="validateDates()">
           </div>
 
           <div class="mb-4">
             <label class="form-label fw-bold" for="megjegyzes">Megjegyzés</label>
-            <textarea class="form-control" id="megjegyzes" rows="2" placeholder="Opcionális információk..."></textarea>
+            <textarea class="form-control" id="megjegyzes" rows="2" placeholder="Opcionális információk..." oninput="validateDates()"></textarea>
           </div>
 
           <button type="submit" class="btn btn-primary w-100 py-2 fw-bold shadow-sm" id="submitBtn" disabled>
@@ -2340,6 +2339,7 @@
   await loadUserData();
   if (currentUserProfile) {
     await loadAppSettings();
+    updateTabVisibility(currentUserProfile); // a beállítások (pl. kreatív véleményező) betöltése után újra
     initSessionGuard(); // 🔒 kiléptetés + verziófigyelés
   }
   await populateSubstitutesDropdown();
@@ -2833,6 +2833,30 @@ async function loadAppSettings() {
   await loadWorkHoursHistory();
 }
 
+// Kreatív véleményezési beállítások frissítése közvetlenül beküldés előtt
+// (ha az admin időközben módosította a listát, a régóta nyitott oldal is a friss listával dönt)
+async function refreshCreativeSettings() {
+  try {
+    const { data, error } = await supabaseClient
+      .from('system_settings')
+      .select('key, value')
+      .in('key', ['creativeReviewerEmail', 'creativeReviewExtraEmails']);
+    if (error) throw error;
+    const map = Object.fromEntries((data || []).map(r => [r.key, r.value]));
+    if (map.creativeReviewerEmail !== undefined) {
+      window.appSettings.creativeReviewerEmail = String(map.creativeReviewerEmail || '').trim().toLowerCase();
+    }
+    if (map.creativeReviewExtraEmails !== undefined) {
+      window.appSettings._extraFromDb = true;
+      window.appSettings.creativeExtraEmails = new Set(
+        String(map.creativeReviewExtraEmails || '').split(',').map(x => hoNorm(x)).filter(Boolean)
+      );
+    }
+  } catch (e) {
+    console.warn('Kreatív beállítások frissítése sikertelen, a betöltéskori lista érvényes:', e.message || e);
+  }
+}
+
 function getCreativeReviewerEmail() { return window.appSettings.creativeReviewerEmail || ''; }
 function getCreativeReviewerName() { return window.appSettings.creativeReviewerName || getCreativeReviewerEmail(); }
 
@@ -3232,6 +3256,9 @@ function buildDecisionEmailHtml(dolgozoNeve, statusz, tipus, kezdoDatum, vegDatu
 
   // 1. Szerepkör szerinti alapjogok
   let canSeeTeam = ['manager', 'leader', 'csoportvezeto', 'admin', 'boss'].includes(cleanRole);
+  // A kreatív véleményező szerepkörtől függetlenül látja a Csapat Bírálat fület
+  const reviewerEmail = (window.appSettings && window.appSettings.creativeReviewerEmail) || '';
+  if (reviewerEmail && normalizeStr(profile.email) === normalizeStr(reviewerEmail)) canSeeTeam = true;
   let canSeeAdmin = (cleanRole === 'admin');
   let canSeeOvertime = ['manager', 'boss', 'admin'].includes(cleanRole);
   let canSeePayroll = (cleanRole === 'admin'); // Bérszámfejtés: csak admin, vagy egyedi fülként megadva
@@ -3376,7 +3403,7 @@ async function loadMyRequests() {
         return false;
       }
 
-      const isPending = ['pending_level1', 'pending_admin', 'Függőben'].includes(r.status);
+      const isPending = String(r.status || '').startsWith('pending') || r.status === 'Függőben';
       const isFutureOrToday = (r.veg_datum || r.kezdo_datum) >= todayStr;
 
       return isPending || isFutureOrToday;
@@ -3392,6 +3419,11 @@ async function loadMyRequests() {
 
     tbody.innerHTML = activeRequests.map(r => {
       let badge = `<span class="badge bg-warning text-dark">⏳ Függőben</span>`;
+      if (r.status === 'pending_creative_review') {
+        badge = `<span class="badge text-white" style="background-color:#6f42c1;">💬 Kreatív véleményezésre vár</span>`;
+      } else if (r.status === 'pending_hr') {
+        badge = `<span class="badge bg-warning text-dark">⏳ HR jóváhagyásra vár</span>`;
+      }
       if (r.status === 'approved' || r.status === 'Jóváhagyva') {
         badge = `<span class="badge bg-success">✓ Jóváhagyva</span>`;
       }
@@ -3753,7 +3785,9 @@ async function handleFormSubmit(e) {
   
   const megjegyzes = (document.getElementById('megjegyzes') ? document.getElementById('megjegyzes').value.trim() : ''); 
   const helyettes = document.getElementById('reqHelyettes')?.value || '';
-  let rendkivuli = document.getElementById('rendkivuliOk')?.value || '';
+  // Rendkívüli kérelemnél az indoklás a Megjegyzés mezőből jön (egyetlen indoklás mező)
+  const rendkivuliContainerEl = document.getElementById('rendkivuliContainer');
+  let rendkivuli = (rendkivuliContainerEl && !rendkivuliContainerEl.classList.contains('hidden')) ? megjegyzes : '';
 
   // 🎯 TÍPUS NORMÁLÁSA ÉS VÁLTOZÓNÉV JAVÍTÁSA (normType)
   const normType = String(tipus || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
@@ -3917,6 +3951,9 @@ async function finalizeAndSaveRequest(reqData, btn) {
 
   reqData.profile_id = currentUserProfile.id;
   reqData.user_email = currentUserProfile.email;
+
+  // Friss véleményezési lista az adatbázisból (régóta nyitott oldal esetén is)
+  await refreshCreativeSettings();
 
   // A boss kérelmei automatikusan jóváhagyottak
   const autoApproved = !isSpecialHR && (roleOf(currentUserProfile) === 'boss' || ['Betegszabadság', 'Home office', 'Tréning', 'Ügyfél'].includes(reqData.tipus));
@@ -4149,16 +4186,23 @@ async function submitCreativeOpinion(requestId, opinionText) {
     const nextApprover = await getEffectiveApproverEmail(baseNext);
 
     // 3. Kérelem frissítése: átirányítás a feletteshez 'pending_level1' státusszal
-    const { error: uErr } = await supabaseClient
+    const { data: fwdRows, error: uErr } = await supabaseClient
       .from('leave_requests')
       .update({
-        status: 'pending_level1',
+        status: nextApprover === 'admin.oranyilvantartas@spicecommunication.hu' ? 'pending_admin' : 'pending_level1',
         approver_email: nextApprover,
         megjegyzes: updatedMegjegyzes
       })
-      .eq('id', requestId);
+      .eq('id', requestId)
+      .eq('status', 'pending_creative_review')
+      .select();
 
     if (uErr) throw uErr;
+    if (!fwdRows || fwdRows.length === 0) {
+      showToast("⚠️ Ezt a kérelmet időközben már elbírálták vagy visszavonták.", "warning");
+      if (typeof loadPendingApprovals === 'function') await loadPendingApprovals();
+      return;
+    }
 
     showToast("Vélemény sikeresen rögzítve, kérelem továbbítva a felettesnek!", "success");
 
@@ -4294,7 +4338,7 @@ function buildCreativeOpinionEmailHtml(dolgozoNeve, tipus, kezdoDatum, vegDatum,
       .from('leave_requests')
       .delete()
       .eq('id', id)
-      .in('status', ['pending_level1', 'pending_admin', 'pending_hr', 'pending_manager', 'Függőben', 'approved', 'Jóváhagyva'])
+      .in('status', ['pending_level1', 'pending_admin', 'pending_hr', 'pending_manager', 'pending_creative_review', 'Függőben', 'approved', 'Jóváhagyva'])
       .select();
 
     if (error) throw error;
@@ -4370,11 +4414,18 @@ function buildCreativeOpinionEmailHtml(dolgozoNeve, tipus, kezdoDatum, vegDatum,
         // Admin mindent lát (beleértve a kreatív véleményezésre várókat is)
         query = query.or('status.eq.pending_admin,status.eq.pending_level1,status.eq.pending_hr,status.eq.pending_creative_review,status.eq."Függőben"');
       } else if (isHRManager) {
-        // HR Vezető látja a saját csoportjának függő kérelmeit ÉS az ÖSSZES különleges HO (pending_hr) / kreatív véleményezést
-        query = query.or(`approver_email.eq."${userEmail}",status.eq.pending_hr,status.eq.pending_creative_review`);
+        // HR Vezető: a hozzá címzett függő kérelmek ÉS az összes HR-jóváhagyásra váró (pl. Egyedi HO 2/2)
+        // (a kreatív véleményezésre várókat csak a véleményező és az admin látja)
+        query = query.or(`and(approver_email.eq."${userEmail}",status.in.(pending_level1,pending_admin,pending_hr)),status.eq.pending_hr`);
       } else {
-        // Hagyományos vezető és Adél: látják a hozzájuk rendelhető level1 ÉS pending_creative_review kérelmeket
-        query = query.eq('approver_email', userEmail).in('status', ['pending_level1', 'pending_creative_review']);
+        const amReviewer = !!getCreativeReviewerEmail() && userEmail === getCreativeReviewerEmail();
+        if (amReviewer) {
+          // Kreatív véleményező: a hozzá címzett kérelmek + az ÖSSZES véleményezésre váró
+          query = query.or(`and(approver_email.eq."${userEmail}",status.in.(pending_level1,pending_admin,pending_hr)),status.eq.pending_creative_review`);
+        } else {
+          // Hagyományos vezető: a hozzá rendelt függő kérelmek
+          query = query.eq('approver_email', userEmail).in('status', ['pending_level1', 'pending_admin']);
+        }
       }
 
       let { data: reqs, error } = await query.order('created_at', { ascending: false });
@@ -4582,7 +4633,7 @@ async function executeSubmitCreativeOpinion() {
         return;
       }
 
-      const validPendingStatuses = ['pending_level1', 'pending_admin', 'pending_hr', 'pending_manager', 'Függőben'];
+      const validPendingStatuses = ['pending_level1', 'pending_admin', 'pending_hr', 'pending_manager', 'pending_creative_review', 'Függőben'];
 
       if (!isApprove) {
         // Feltételes frissítés elutasításkor (csak ha a státusz még mindig függőben van)
@@ -5084,6 +5135,26 @@ async function saveEditUser(event) {
           { key: 'creativeReviewExtraEmails', value: creativeExtra, updated_at: nowIso }
         ], { onConflict: 'key' });
       if (setErr) throw setErr;
+
+      const prevReviewer = getCreativeReviewerEmail();
+      if (creativeReviewer !== prevReviewer) {
+        if (creativeReviewer) {
+          // A véleményezésre váró kérelmek átkerülnek az új véleményezőhöz
+          await supabaseClient.from('leave_requests')
+            .update({ approver_email: creativeReviewer })
+            .eq('status', 'pending_creative_review');
+        } else {
+          // Véleményezés kikapcsolva: a várakozó kérelmek a végső jóváhagyóhoz mennek
+          const { data: waiting } = await supabaseClient.from('leave_requests')
+            .select('id, final_approver_email').eq('status', 'pending_creative_review');
+          for (const w of (waiting || [])) {
+            if (!w.final_approver_email) continue;
+            await supabaseClient.from('leave_requests')
+              .update({ status: 'pending_level1', approver_email: w.final_approver_email })
+              .eq('id', w.id).eq('status', 'pending_creative_review');
+          }
+        }
+      }
       await loadAppSettings();
       sessionGuard.logoutMinutes = logoutMinutes;
 
@@ -7605,9 +7676,10 @@ async function submitChallenge() {
       if (diffDays < 15) {
         if (rendkivuliContainer) rendkivuliContainer.classList.remove('hidden');
         const isRendkivuliCb = document.getElementById('isRendkivuli');
-        const rendkivuliOkInput = document.getElementById('rendkivuliOk');
+        const indoklasEl = document.getElementById('megjegyzes');
         
-        if ((isRendkivuliCb && !isRendkivuliCb.checked) || (rendkivuliOkInput && !rendkivuliOkInput.value.trim())) {
+        // Tudomásulvétel + kitöltött Megjegyzés / Indoklás kell a beküldéshez
+        if ((isRendkivuliCb && !isRendkivuliCb.checked) || (indoklasEl && !indoklasEl.value.trim())) {
           submitBtn.disabled = true;
           return;
         }
