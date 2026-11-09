@@ -2833,6 +2833,21 @@ async function loadAppSettings() {
   await loadWorkHoursHistory();
 }
 
+// 📥 LAPOZOTT LEKÉRÉS: a Supabase egy kérésre legfeljebb 1000 sort ad vissza,
+// ezért 1000-es lapokban, stabil sorrendben töltjük le az összeset.
+async function fetchAllPaged(buildQuery, pageSize = 1000) {
+  const all = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await buildQuery().order('id', { ascending: true }).range(from, from + pageSize - 1);
+    if (error) return { data: all, error };
+    if (data && data.length) all.push(...data);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  return { data: all, error: null };
+}
+
 // Kreatív véleményezési beállítások frissítése közvetlenül beküldés előtt
 // (ha az admin időközben módosította a listát, a régóta nyitott oldal is a friss listával dönt)
 async function refreshCreativeSettings() {
@@ -3207,9 +3222,9 @@ function buildDecisionEmailHtml(dolgozoNeve, statusz, tipus, kezdoDatum, vegDatu
 
     // Lekérdezés profile_id ALAPJÁN (fallback-ként meglévő user_email illesztéssel)
     const [reqRes, otRes, decRes] = await Promise.all([
-      supabaseClient.from('leave_requests').select('*').or(`profile_id.eq.${profile.id},user_email.ilike.${email}`),
-      supabaseClient.from('work_logs').select('*').or(`profile_id.eq.${profile.id},user_email.ilike.${email}`),
-      supabaseClient.from('overtime_decisions').select('*').or(`profile_id.eq.${profile.id},user_email.ilike.${email}`)
+      fetchAllPaged(() => supabaseClient.from('leave_requests').select('*').or(`profile_id.eq.${profile.id},user_email.ilike.${email}`)),
+      fetchAllPaged(() => supabaseClient.from('work_logs').select('*').or(`profile_id.eq.${profile.id},user_email.ilike.${email}`)),
+      fetchAllPaged(() => supabaseClient.from('overtime_decisions').select('*').or(`profile_id.eq.${profile.id},user_email.ilike.${email}`))
     ]);
 
     // 🎯 FRISSÍTVE: Az 5. paraméter (nyitó egyenleg) bekötése
@@ -3307,16 +3322,17 @@ async function loadMyRequests() {
 
     // 🎯 1. BIZTOS LEKÉRDEZÉS: KIZÁRÓLAG user_email ALAPJÁN (elkerülve az hiányzó oszlop miatti 400-as hibát)
     const [reqRes, logRes, decRes] = await Promise.all([
-      supabaseClient.from('leave_requests').select('*').ilike('user_email', emailClean).order('kezdo_datum', { ascending: false }),
-      supabaseClient.from('work_logs').select('*').ilike('user_email', emailClean),
-      supabaseClient.from('overtime_decisions').select('*').ilike('user_email', emailClean)
+      fetchAllPaged(() => supabaseClient.from('leave_requests').select('*').ilike('user_email', emailClean)),
+      fetchAllPaged(() => supabaseClient.from('work_logs').select('*').ilike('user_email', emailClean)),
+      fetchAllPaged(() => supabaseClient.from('overtime_decisions').select('*').ilike('user_email', emailClean))
     ]);
 
     if (reqRes.error) console.error("Kérelmek lekérési hiba:", reqRes.error);
     if (logRes.error) console.error("Work_logs lekérési hiba:", logRes.error);
     if (decRes.error) console.error("Decisions lekérési hiba:", decRes.error);
 
-    userRequestsCache = reqRes.data || [];
+    // Legfrissebb kérelmek elöl (a lapozott lekérés azonosító szerint rendez)
+    userRequestsCache = (reqRes.data || []).sort((a, b) => String(b.kezdo_datum || '').localeCompare(String(a.kezdo_datum || '')));
     const userWorkLogs = logRes.data || [];
     const userDecisions = decRes.data || [];
 
@@ -5157,6 +5173,14 @@ async function saveEditUser(event) {
       }
       await loadAppSettings();
       sessionGuard.logoutMinutes = logoutMinutes;
+
+      // A beállítások mindenkit érintenek: a nyitva hagyott ablakok is töltsenek újra
+      try {
+        const newVer = new Date().toISOString();
+        await supabaseClient.from('system_settings')
+          .upsert({ key: 'app_version', value: newVer, updated_at: newVer }, { onConflict: 'key' });
+        sessionGuard.appVersion = newVer; // a saját ablakunk ne töltsön újra
+      } catch (verErr) { console.warn('Verzió-jelzés sikertelen:', verErr); }
 
       // A meglévő munkatársak egyéni HO keretét NEM írjuk felül;
       // ez az érték csak az új munkatársak alapértelmezése.
