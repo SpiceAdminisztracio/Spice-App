@@ -8457,9 +8457,6 @@ async function renderTeamLeaveMatrix() {
     if (t === 't' || t.includes('tavalyi') || t.includes('hozott')) {
       return { code: 'T', cls: 'badge-t', title: 'Tavalyi szabadság', isTavalyi: true, isIdei: false };
     }
-    if (t === 'sz' || t.includes('szabadsag') || t.includes('szabi') || t.includes('eves') || t.includes('alap') || t.includes('fizetett')) {
-      return { code: 'SZ', cls: 'badge-sz', title: 'Szabadság', isTavalyi: false, isIdei: true };
-    }
     if (t === 'b' || t === 'bs' || t.includes('beteg') || t.includes('tappenz')) {
       return { code: 'B', cls: 'badge-b', title: 'Betegszabadság', isTavalyi: false, isIdei: false };
     }
@@ -8484,7 +8481,13 @@ async function renderTeamLeaveMatrix() {
     if (t === 'ho' || t.includes('home') || t.includes('otthoni')) {
       return { code: 'HO', cls: 'badge-ho', title: 'Home Office', isTavalyi: false, isIdei: false };
     }
-    return { code: 'SZ', cls: 'badge-sz', title: 'Távollét', isTavalyi: false, isIdei: true };
+    // A sima szabadság a VÉGÉRE kerül: a "Betegszabadság", "Apaszabadság", "Fizetés nélküli szabadság",
+    // "Kegyeleti szabadság" is tartalmazza a "szabadság" szót, ezért azokat előbb kell felismerni
+    if (t === 'sz' || t.includes('szabadsag') || t.includes('szabi') || t.includes('eves') || t.includes('alap')) {
+      return { code: 'SZ', cls: 'badge-sz', title: 'Szabadság', isTavalyi: false, isIdei: true };
+    }
+    // Ismeretlen / üres típus: megjelenik, de NEM fogy az éves keretből
+    return { code: '?', cls: 'bg-secondary text-white', title: rawType ? `Egyéb: ${rawType}` : 'Ismeretlen típus', isTavalyi: false, isIdei: false };
   };
 
   let selectedMonth = monthEl?.value;
