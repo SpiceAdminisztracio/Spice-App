@@ -6396,12 +6396,26 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
   };
 
   let uncoveredHours = 0;
+  // Mínusz törlesztése: a fedezet nélküli csúsztatás után keletkezett túlóra először a tartozást fedezi
+  // (a legrégebbitől; még a lejárata előtt, így az ilyen óra nem jár le és nem fizethető ki)
+  const repayDebt = (atYmd) => {
+    if (uncoveredHours <= 0) return;
+    for (const bk of buckets) {
+      if (uncoveredHours <= 0) break;
+      if (bk.orak <= 0 || bk.ymd > atYmd) continue;
+      const dd = Math.min(bk.orak, uncoveredHours);
+      bk.orak -= dd;
+      uncoveredHours -= dd;
+    }
+  };
   events.forEach(ev => {
+    repayDebt(ev.ymd);
     expireUntil(ev.ymd);
     if (ev.kind === 'payout' && ev.onlyCat === 'expired') { consumeExpired(ev.hours); return; }
     const left = consume(ev.hours, ev.ymd, ev.kind === 'payout' ? ev.onlyCat : null);
     if (ev.kind === 'leave') uncoveredHours += left; // fedezet nélküli csúsztatás: mínusz egyenleg
   });
+  repayDebt(todayYmd);
   expireUntil(todayYmd);
 
   const nyitoBucket = buckets.find(bk => bk.nyito);
