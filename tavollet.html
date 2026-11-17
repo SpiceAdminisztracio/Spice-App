@@ -1407,7 +1407,7 @@
               data-bs-target="#collapsePayoutHistory" 
               aria-expanded="false" 
               onclick="loadPayoutHistory()">
-        <span><i class="bi bi-clock-history text-primary me-2"></i> Korábbi hónapok kifizetési előzményei</span>
+        <span><i class="bi bi-clock-history text-primary me-2"></i> Kifizetési kérelmek és előzmények</span>
         <i class="bi bi-chevron-down"></i>
       </button>
       
@@ -1423,7 +1423,7 @@
                   <th>Kifizetett óra</th>
                   <th>Összeg</th>
                   <th>Igénylő Felettes</th>
-                  <th>Jóváhagyó</th>
+                  <th>Státusz / Jóváhagyó</th>
                 </tr>
               </thead>
               <tbody id="payoutHistoryTableBody">
@@ -7545,7 +7545,7 @@ async function loadApprovalHistory() {
           <td data-label="Összeg" class="fw-bold text-success">${amountFormatted}</td>
           <td data-label="Indoklás" class="text-start"><small class="text-muted d-block text-truncate" style="max-width: 140px;" title="${safeEscape(r.megjegyzes || '-')}">${safeEscape(r.megjegyzes || '-')}</small></td>
           <td data-label="Dátum"><span class="badge bg-light text-dark border">${dateDisplay}</span></td>
-          <td data-label="Státusz">${statusBadge}<small class="d-block text-muted" style="font-size:0.7rem;">${approverName}</small></td>
+          <td data-label="Státusz">${statusBadge}<small class="d-block text-muted" style="font-size:0.7rem;">${approverName}</small>${(st === 'challenged' && r.challenge_reason) ? `<small class="d-block text-danger fw-bold mt-1" style="font-size:0.7rem; max-width: 180px; white-space: normal;"><i class="bi bi-chat-left-dots-fill me-1"></i>${safeEscape(r.challenge_reason)}</small>` : ''}</td>
         </tr>
       `;
     }).join('');
@@ -7716,8 +7716,69 @@ function openChallengeModal(requestId, currentAmount, eredetiAmount) {
   }
 }
 
+// 📧 Értesítés a kifizetést kérő vezetőnek, amikor a kérelmét jóváhagyják vagy módosítják (challenge)
+function payoutReasonText(megjegyzes) {
+  return String(megjegyzes || '').replace(/\n?\[Érintett napok:[^\]]*\]/g, '').trim();
+}
+
+function notifyPayoutSubmitter(dec, action, extra = {}) {
+  try {
+    if (!dec || typeof sendAutomatedEmail !== 'function') return;
+    const to = String(dec.submitter_email || '').toLowerCase().trim();
+    const me = String(currentUserProfile?.email || '').toLowerCase().trim();
+    if (!to || !to.includes('@') || to === me) return; // saját kérelmét bíráló nem kap magának levelet
+
+    const esc = (t) => (typeof escapeHtml === 'function' ? escapeHtml(String(t ?? '')) : String(t ?? ''));
+    const ft = (n) => Number(n || 0).toLocaleString('hu-HU') + ' Ft';
+    const empName = dec.nev || dec.user_email || '';
+    const approverName = currentUserProfile?.nev || currentUserProfile?.email || 'A jóváhagyó';
+    const catLabel = { hetkoznapi: 'Hétköznapi túlmunka', hetvegi: 'Hétvégi esemény', ejszakai: 'Éjszakai esemény', lejart: 'Lejárt túlmunka (kötelező kifizetés)' };
+    const cat = catLabel[String(dec.overtime_category || '').toLowerCase()] || dec.overtime_category || 'Túlmunka';
+    const hours = fmtOra(dec.orak || 0) + ' óra';
+    const ownReason = payoutReasonText(dec.megjegyzes);
+    const isChallenge = action === 'challenged';
+
+    const subject = isChallenge
+      ? `Túlmunka kifizetés módosítva – ${empName}`
+      : `Túlmunka kifizetés jóváhagyva – ${empName}`;
+
+    const amountLine = isChallenge
+      ? `- Eredetileg kért összeg: ${ft(extra.origAmount)}\n- Jóváhagyott (módosított) összeg: ${ft(extra.newAmount)}\n- ${approverName} indoklása: ${extra.reason || '-'}`
+      : `- Összeg: ${ft(dec.osszeg)}`;
+    const bodyText = `Szia!\n\n${approverName} ${isChallenge ? 'módosította' : 'jóváhagyta'} a(z) ${empName} részére beküldött túlmunka kifizetési kérelmedet.\n\n- Munkatárs: ${empName}\n- Kategória: ${cat}\n- Óraszám: ${hours}\n${amountLine}\n- A te indoklásod: ${ownReason || '-'}\n\nA részleteket a Távollét Kezelő Portálon, a Túlmunka kifizetés kezelőben látod.`;
+
+    const row = (label, value, style = '') => `<tr><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; color: #64748b; width: 45%;">${label}</td><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; ${style}">${value}</td></tr>`;
+    const amountRows = isChallenge
+      ? row('Eredetileg kért összeg:', `<span style="text-decoration: line-through; color: #94a3b8;">${ft(extra.origAmount)}</span>`) +
+        row('Jóváhagyott (módosított) összeg:', ft(extra.newAmount), 'font-weight: bold; color: #b45309;')
+      : row('Összeg:', ft(dec.osszeg), 'font-weight: bold; color: #16a34a;');
+    const reasonBox = isChallenge
+      ? `<div style="background: #fef3c7; border: 1px solid #fcd34d; color: #78350f; padding: 10px 12px; border-radius: 6px; margin-top: 12px;"><strong>${esc(approverName)} indoklása:</strong><br>${esc(extra.reason || '-')}</div>`
+      : '';
+    const htmlBody = `
+      <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; max-width: 500px;">
+        <h3 style="color: ${isChallenge ? '#b45309' : '#15803d'}; margin-top: 0;">${isChallenge ? '⚠️ Túlmunka kifizetés módosítva' : '✅ Túlmunka kifizetés jóváhagyva'}</h3>
+        <p><strong>${esc(approverName)}</strong> ${isChallenge ? 'módosította' : 'jóváhagyta'} a(z) <strong>${esc(empName)}</strong> részére beküldött kifizetési kérelmedet.</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 15px 0 0; font-size: 14px;">
+          ${row('Munkatárs:', esc(empName), 'font-weight: bold;')}
+          ${row('Kategória:', esc(cat))}
+          ${row('Óraszám:', esc(hours), 'font-weight: bold;')}
+          ${amountRows}
+          ${row('A te indoklásod:', esc(ownReason || '-'), 'font-style: italic;')}
+        </table>
+        ${reasonBox}
+      </div>
+    `;
+    sendAutomatedEmail(to, subject, bodyText, htmlBody);
+  } catch (e) {
+    console.warn('Kifizetési értesítő hiba:', e);
+  }
+}
+
 async function processApproval(requestId, actionStatus) {
   try {
+    const { data: decBefore } = await supabaseClient.from('overtime_decisions').select('*').eq('id', requestId).maybeSingle();
+
     const { error } = await supabaseClient
       .from('overtime_decisions')
       .update({
@@ -7728,6 +7789,8 @@ async function processApproval(requestId, actionStatus) {
       .eq('id', requestId);
 
     if (error) throw error;
+
+    if (String(actionStatus).toLowerCase() === 'approved') notifyPayoutSubmitter(decBefore, 'approved');
 
     if (typeof showToast === 'function') showToast("Kérelem sikeresen jóváhagyva!", "success");
     else showModal("Kérelem sikeresen jóváhagyva!", "Siker");
@@ -7756,6 +7819,10 @@ async function submitChallenge() {
   if (btn) btn.disabled = true;
 
   try {
+    const challengedId = pendingChallengeRequestId;
+    const origAmount = pendingOriginalAmount;
+    const { data: decBefore } = await supabaseClient.from('overtime_decisions').select('*').eq('id', challengedId).maybeSingle();
+
     const { error } = await supabaseClient
       .from('overtime_decisions')
       .update({
@@ -7769,6 +7836,8 @@ async function submitChallenge() {
       .eq('id', pendingChallengeRequestId);
 
     if (error) throw error;
+
+    notifyPayoutSubmitter(decBefore, 'challenged', { newAmount, origAmount, reason });
 
     if (typeof showToast === 'function') showToast("Kifizetési összeg sikeresen módosítva!", "success");
     else showModal("Kifizetési összeg sikeresen módosítva!", "Siker");
@@ -9723,12 +9792,17 @@ async function loadPayoutHistory() {
       const isApproved = st.includes('approved') || st.includes('jovahagy') || st.includes('kifizet') || st.includes('elfogad') || st === 'challenged' || st.includes('modosit');
       const amount = Number(d.osszeg || d.eredeti_osszeg || d.amount || d.kifizetett_osszeg || 0);
       const isPayout = d.tipus === 'Kifizetés' || d.tipus === 'payout' || amount > 0;
-      return isApproved && isPayout;
+      // A kérelmező vezető a saját beküldött kérelmeit minden állapotban látja (függőben / elutasítva is)
+      const isMine = myEmail && safeNorm(d.submitter_email) === myEmail;
+      return isPayout && (isApproved || isMine);
     });
 
     // 🎯 SZIGORÚ RANGSOR ALAPÚ SZŰRÉS LÁTÓKÖRHÖZ
     if (!isAdmin) {
       approvedPayouts = approvedPayouts.filter(d => {
+        // A saját beküldött kérelmeit mindenki látja (pl. helyettesként beküldött kifizetés is)
+        if (myEmail && safeNorm(d.submitter_email) === myEmail) return true;
+
         const emailKey = safeNorm(d.user_email || d.email || d.munkatars_email);
         const targetProf = profMap[emailKey] || (d.profile_id ? profMap[d.profile_id] : null) || (emailKey.includes('@') ? profMap[emailKey.split('@')[0]] : null);
 
@@ -9800,7 +9874,19 @@ async function loadPayoutHistory() {
       const submitter = safeEscape(d.submitter_name || d.submitter_email || d.igenylo_felettes || d.felettes || '-');
       const approver = safeEscape(d.approver_email || d.jovahagyo_email || d.jovahagyo || '-');
       
-      const isChallenged = safeNorm(d.status) === 'challenged' || safeNorm(d.status).includes('modositva');
+      const stN = safeNorm(d.status);
+      const isChallenged = stN === 'challenged' || stN.includes('modositva');
+      const isRejected = stN.includes('reject') || stN.includes('elutasit');
+      const isPending = stN.startsWith('pending') || stN.includes('fuggo');
+      const statusBadge = isChallenged ? '<span class="badge bg-warning text-dark">Módosítva</span>'
+        : isRejected ? '<span class="badge bg-danger">Elutasítva</span>'
+        : isPending ? '<span class="badge bg-secondary">Függőben</span>'
+        : '<span class="badge bg-success">Jóváhagyva</span>';
+      const origAmount = Number(d.eredeti_osszeg || 0);
+      const origLine = (isChallenged && origAmount && origAmount !== amount)
+        ? `<small class="text-muted text-decoration-line-through d-block" style="font-size:0.7rem;" title="Eredetileg kért összeg">${origAmount.toLocaleString('hu-HU')} Ft</small>` : '';
+      const reasonLine = (isChallenged && d.challenge_reason)
+        ? `<small class="d-block text-danger fw-bold mt-1" style="font-size:0.7rem; max-width: 200px; white-space: normal;" title="Jóváhagyó indoklása"><i class="bi bi-chat-left-dots-fill me-1"></i>${safeEscape(d.challenge_reason)}</small>` : '';
 
       return `
         <tr>
@@ -9810,10 +9896,10 @@ async function loadPayoutHistory() {
           <td data-label="Óra" class="fw-semibold">${fmtOra(hours)} óra</td>
           <td data-label="Összeg">
             <span class="fw-bold text-success">${amount > 0 ? amount.toLocaleString('hu-HU') + ' Ft' : '-'}</span>
-            ${isChallenged ? '<small class="text-warning d-block" style="font-size:0.7rem;">(Módosítva)</small>' : ''}
+            ${origLine}
           </td>
           <td data-label="Igénylő" class="small text-muted">${submitter}</td>
-          <td data-label="Jóváhagyó" class="small text-muted fw-semibold">${approver}</td>
+          <td data-label="Jóváhagyó" class="small text-muted fw-semibold">${statusBadge}<div>${isPending ? '' : approver}</div>${reasonLine}</td>
         </tr>
       `;
     }).join('');
