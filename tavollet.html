@@ -2719,6 +2719,29 @@ async function loadWorkHoursHistory() {
   } catch (e) {
     console.warn('Munkaidő-előzmény betöltési hiba (ha a tábla még nincs létrehozva, a profil értéke számít):', e.message || e);
   }
+  await loadOvertimeExpiryExtensions();
+}
+
+// ⏳ TÚLÓRA LEJÁRAT-HOSSZABBÍTÁS: egy adott napon keletkezett túlóra lejárata egyedileg kitolható
+window.otExpiryExtensions = new Map(); // email -> Map(tulora_datum -> uj_lejarat)
+async function loadOvertimeExpiryExtensions() {
+  try {
+    const { data, error } = await supabaseClient.from('tulora_lejarat_hosszabbitas').select('*');
+    if (error) throw error;
+    const map = new Map();
+    (data || []).forEach(r => {
+      const key = hoNorm(r.email);
+      const tol = String(r.tulora_datum || '').substring(0, 10);
+      const ig = String(r.uj_lejarat || '').substring(0, 10);
+      if (!key || !tol || !ig) return;
+      if (!map.has(key)) map.set(key, new Map());
+      const m = map.get(key);
+      if (!m.has(tol) || m.get(tol) < ig) m.set(tol, ig);
+    });
+    window.otExpiryExtensions = map;
+  } catch (e) {
+    console.warn('Lejárat-hosszabbítások betöltési hiba (ha a tábla még nincs létrehozva, nincs hosszabbítás):', e.message || e);
+  }
 }
 
 // Az adott napon érvényes napi munkaidő
@@ -2779,7 +2802,7 @@ function renderMyExpiringHours(otStats) {
   [['weekday', otStats.hetkoznapiDetails], ['weekend', otStats.hetvegiDetails], ['night', otStats.ejszakaiDetails]]
     .forEach(([cat, list]) => (list || []).forEach(d => {
       if (Number(d.oraszam) > 0 && d.daysRemaining >= 0) {
-        items.push({ cat, datum: d.datum, ora: Number(d.oraszam), napok: d.daysRemaining, lejar: addDays(d.datum, 45), nyito: !!d.nyito });
+        items.push({ cat, datum: d.datum, ora: Number(d.oraszam), napok: d.daysRemaining, lejar: d.lejarat || addDays(d.datum, 45), nyito: !!d.nyito, hosszabbitva: !!d.hosszabbitva });
       }
     }));
   items.sort((a, b) => a.napok - b.napok);
@@ -2797,7 +2820,7 @@ function renderMyExpiringHours(otStats) {
     const cls = i.napok <= 10 ? 'urgent' : (i.napok <= 20 ? 'soon' : 'ok');
     const when = i.napok === 0 ? 'ma lejár!' : `${i.napok} nap múlva lejár`;
     return `<div class="expiring-row">
-      <span><strong>${fmtOra(i.ora)} óra</strong> <span class="text-muted">· ${i.nyito ? 'nyitó egyenleg (' + fmtDate(i.datum) + ')' : fmtDate(i.datum) + ' · ' + catLabel[i.cat]}</span></span>
+      <span><strong>${fmtOra(i.ora)} óra</strong> <span class="text-muted">· ${i.nyito ? 'nyitó egyenleg (' + fmtDate(i.datum) + ')' : fmtDate(i.datum) + ' · ' + catLabel[i.cat]}${i.hosszabbitva ? ' · meghosszabbítva' : ''}</span></span>
       <span class="expiring-pill ${cls}" title="Lejárat: ${fmtDate(i.lejar)}">${i.napok <= 10 ? '⚠️ ' : ''}${when}</span>
     </div>`;
   }).join('');
@@ -6208,7 +6231,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
   //   elsőként fogy, és a többi túlórához hasonlóan 45 nap után lejár
   // - csúsztatás: nyitó egyenleg -> hétköznapi (legrégebbitől) -> csak ha ez nem elég: hétvégi + éjszakai (legrégebbitől)
   // - kifizetés: KIZÁRÓLAG a saját kategóriájából (overtime_category), az orak mezőben megadott óraszámmal
-  // - a levonás a csúsztatás napján / a kifizetés beküldésének napján történik, az akkor elérhető órákból;
+  // - a levonás a csúsztatás napján (jövőbeli csúsztatásnál a beküldés napján) / a kifizetés beküldésének napján történik, az akkor elérhető órákból;
   //   ami így felhasználásra került, az kivett, nem jár le utólag; ami 45 napon belül nem fogyott el, az lejárt
   // =====================================================================
   const DAY_MS = 1000 * 60 * 60 * 24;
@@ -6252,13 +6275,22 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
     remainingInitial = 0;
   }
 
+  // Lejárati nap: a keletkezést követő 45. nap, kivéve ha egyedi hosszabbítás van rá (tulora_lejarat_hosszabbitas)
+  const addDaysYmd = (ymd, n) => { const x = new Date(ymd + 'T12:00:00'); x.setDate(x.getDate() + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+  const extMap = (window.otExpiryExtensions instanceof Map) ? window.otExpiryExtensions.get(targetEmail) : null;
+  buckets.forEach(bk => {
+    bk.lejarat = addDaysYmd(bk.ymd, 45);
+    const ext = extMap ? extMap.get(bk.ymd) : null;
+    if (ext && ext > bk.lejarat) { bk.lejarat = ext; bk.hosszabbitva = true; }
+  });
+
   const expiredOvertimes = [];
   let lejartTulora = 0;
   const expireUntil = (atYmd) => {
     buckets.forEach(bk => {
-      if (bk.orak > 0 && ymdDiff(bk.ymd, atYmd) > 45) {
+      if (bk.orak > 0 && atYmd > bk.lejarat) {
         lejartTulora += bk.orak;
-        expiredOvertimes.push({ datum: bk.datum, orak: bk.orak, nyito: !!bk.nyito });
+        expiredOvertimes.push({ datum: bk.datum, orak: bk.orak, nyito: !!bk.nyito, lejarat: bk.lejarat });
         bk.orak = 0;
       }
     });
@@ -6315,8 +6347,17 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
       }
     }
     if (!(hours > 0)) hours = limitFor(reqStart);
-    // A jövőbeli csúsztatás a mai napon "foglalja le" a legrégebbi órákat
-    events.push({ ymd: reqStart < todayYmd ? reqStart : todayYmd, ord: 1, kind: 'leave', hours });
+    // A jövőbeli csúsztatás a BEKÜLDÉSE napján "foglalja le" a legrégebbi órákat (nem a mai napon),
+    // így a beküldés után lejáró órák nem tehetik utólag fedezetlenné
+    const localYmdOf = (v) => {
+      if (!v) return '';
+      const x = new Date(v);
+      if (isNaN(x)) return cleanYmd(v);
+      return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+    };
+    let bookYmd = localYmdOf(r.created_at) || localYmdOf(r.approved_at) || todayYmd;
+    if (bookYmd > todayYmd) bookYmd = todayYmd;
+    events.push({ ymd: reqStart < bookYmd ? reqStart : bookYmd, ord: 1, kind: 'leave', hours });
   });
 
   (overtimeDecisions || []).forEach(d => {
@@ -6329,7 +6370,8 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
     if (!(emailMatch && isNotRejected && isPayout)) return;
 
     const cat = normalizeStr(d.overtime_category || d.kategoria || '');
-    const onlyCat = cat.includes('hetveg') ? 'weekend' : (cat.includes('ejszak') ? 'night' : 'weekday');
+    // "Lejárt túlmunka (kötelező kifizetés)": a már lejárt órákból fizet, nem az élő egyenlegből
+    const onlyCat = cat.includes('lejart') ? 'expired' : (cat.includes('hetveg') ? 'weekend' : (cat.includes('ejszak') ? 'night' : 'weekday'));
     // A kifizetés a beküldés napján történt (a datum mező csak az első érintett nap)
     let at = cleanYmd(d.created_at) || decDate;
     if (at > todayYmd) at = todayYmd;
@@ -6338,9 +6380,25 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
 
   events.sort((x, y) => x.ymd.localeCompare(y.ymd) || x.ord - y.ord);
 
+  // Lejárt órák kifizetése: a lejárt tételekből fogy (legrégebbitől), így azok már nem "kötelező kifizetés"
+  const consumeExpired = (amount) => {
+    let rest = amount;
+    expiredOvertimes.sort((x, y) => (y.nyito - x.nyito) || (x.datum - y.datum));
+    for (const ex of expiredOvertimes) {
+      if (rest <= 0) break;
+      if (ex.orak <= 0) continue;
+      const dd = Math.min(ex.orak, rest);
+      ex.orak -= dd;
+      lejartTulora -= dd;
+      rest -= dd;
+    }
+    return rest;
+  };
+
   let uncoveredHours = 0;
   events.forEach(ev => {
     expireUntil(ev.ymd);
+    if (ev.kind === 'payout' && ev.onlyCat === 'expired') { consumeExpired(ev.hours); return; }
     const left = consume(ev.hours, ev.ymd, ev.kind === 'payout' ? ev.onlyCat : null);
     if (ev.kind === 'leave') uncoveredHours += left; // fedezet nélküli csúsztatás: mínusz egyenleg
   });
@@ -6348,9 +6406,9 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
 
   const nyitoBucket = buckets.find(bk => bk.nyito);
   remainingInitial = nyitoBucket ? nyitoBucket.orak : 0;
-  const weekdayOvertimes = buckets.filter(bk => bk.cat === 'weekday').map(bk => ({ datum: bk.datum, orak: bk.orak, nyito: !!bk.nyito }));
-  const weekendOvertimes = buckets.filter(bk => bk.cat === 'weekend').map(bk => ({ datum: bk.datum, orak: bk.orak }));
-  const nightOvertimes = buckets.filter(bk => bk.cat === 'night').map(bk => ({ datum: bk.datum, orak: bk.orak }));
+  const weekdayOvertimes = buckets.filter(bk => bk.cat === 'weekday').map(bk => ({ datum: bk.datum, orak: bk.orak, nyito: !!bk.nyito, lejarat: bk.lejarat, hosszabbitva: !!bk.hosszabbitva }));
+  const weekendOvertimes = buckets.filter(bk => bk.cat === 'weekend').map(bk => ({ datum: bk.datum, orak: bk.orak, lejarat: bk.lejarat, hosszabbitva: !!bk.hosszabbitva }));
+  const nightOvertimes = buckets.filter(bk => bk.cat === 'night').map(bk => ({ datum: bk.datum, orak: bk.orak, lejarat: bk.lejarat, hosszabbitva: !!bk.hosszabbitva }));
   expiredOvertimes.sort((x, y) => x.datum - y.datum);
 
   let hetkoznapiLogolt = weekdayOvertimes.reduce((acc, i) => acc + i.orak, 0);
@@ -6369,11 +6427,14 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
         const y = item.datum.getFullYear();
         const m = String(item.datum.getMonth() + 1).padStart(2, '0');
         const d = String(item.datum.getDate()).padStart(2, '0');
-        const diffDays = Math.round((today - new Date(`${y}-${m}-${d}T00:00:00`)) / (1000 * 60 * 60 * 24));
+        const ymd = `${y}-${m}-${d}`;
+        const lejarat = item.lejarat || addDaysYmd(ymd, 45);
         return {
-          datum: `${y}-${m}-${d}`,
+          datum: ymd,
           oraszam: parseFloat(item.orak.toFixed(2)),
-          daysRemaining: 45 - diffDays,
+          daysRemaining: ymdDiff(todayYmd, lejarat),
+          lejarat,
+          hosszabbitva: !!item.hosszabbitva,
           nyito: !!item.nyito
         };
       });
@@ -6746,6 +6807,9 @@ function renderTeamBalances(selectedGroup = 'ALL') {
             } else {
               expiryText = `${daysRemaining} nap van hátra`;
             }
+            if (d.hosszabbitva && daysRemaining >= 0) {
+              expiryText += ` · meghosszabbítva (${String(d.lejarat || '').replace(/-/g, '.')}.)`;
+            }
           }
 
           const subtextColor = (daysRemaining !== null && daysRemaining < 0) ? 'text-white-50' : 'text-muted';
@@ -6831,7 +6895,9 @@ function calculateAffectedDatesForPayout(userEmail, categoryKey, requestedHours)
   const cat = String(categoryKey || '').toLowerCase();
   const isWeekend = cat.includes('hetveg');
   const isNight = cat.includes('ejszak');
-  const own = (isWeekend ? emp.hetvegiDetails : isNight ? emp.ejszakaiDetails : emp.hetkoznapiDetails) || [];
+  const isExpired = cat.includes('lejart');
+  // lejárt órák kifizetésénél a lejárt tételek napjai érintettek
+  const own = (isExpired ? emp.lejartDetails : isWeekend ? emp.hetvegiDetails : isNight ? emp.ejszakaiDetails : emp.hetkoznapiDetails) || [];
   const list = own.map(x => ({ datum: String(x.datum || x.date || '').substring(0, 10), orak: Number(x.oraszam || x.hours || x.orak || 0), nyito: !!x.nyito }))
     .filter(x => x.datum && x.orak > 0)
     .sort((x, y) => (y.nyito - x.nyito) || x.datum.localeCompare(y.datum));
