@@ -2173,7 +2173,7 @@
 
           <div class="mb-3">
             <label for="payoutHours" class="form-label fw-bold">Kért óraszám (Min. 4 óra) <span class="text-danger">*</span></label>
-            <input type="number" id="payoutHours" class="form-control" min="4" step="0.5" required>
+            <input type="number" id="payoutHours" class="form-control" min="4" step="any" required>
           </div>
 
           <div class="mb-3">
@@ -2797,19 +2797,19 @@ function renderMyExpiringHours(otStats) {
     const cls = i.napok <= 10 ? 'urgent' : (i.napok <= 20 ? 'soon' : 'ok');
     const when = i.napok === 0 ? 'ma lejár!' : `${i.napok} nap múlva lejár`;
     return `<div class="expiring-row">
-      <span><strong>${i.ora.toFixed(1)} óra</strong> <span class="text-muted">· ${i.nyito ? 'nyitó egyenleg (' + fmtDate(i.datum) + ')' : fmtDate(i.datum) + ' · ' + catLabel[i.cat]}</span></span>
+      <span><strong>${fmtOra(i.ora)} óra</strong> <span class="text-muted">· ${i.nyito ? 'nyitó egyenleg (' + fmtDate(i.datum) + ')' : fmtDate(i.datum) + ' · ' + catLabel[i.cat]}</span></span>
       <span class="expiring-pill ${cls}" title="Lejárat: ${fmtDate(i.lejar)}">${i.napok <= 10 ? '⚠️ ' : ''}${when}</span>
     </div>`;
   }).join('');
 
   const nyitoRow = ''; // a nyitó egyenleg 2026.10.01-i tételként a listában szerepel
 
-  const lejartRow = lejart > 0 ? `<div style="font-size:0.75rem;color:#dc2626;margin-top:8px;"><i class="bi bi-x-circle me-1"></i>${lejart.toFixed(1)} óra már lejárt (45 napnál régebbi), ez nem csúsztatható le.</div>` : '';
+  const lejartRow = lejart > 0 ? `<div style="font-size:0.75rem;color:#dc2626;margin-top:8px;"><i class="bi bi-x-circle me-1"></i>${fmtOra(lejart)} óra már lejárt (45 napnál régebbi), ez nem csúsztatható le.</div>` : '';
 
   // Összecsukott alapállapot: csak a fejléc látszik, kattintásra nyílik le a lista
   const summaryPill = urgentHours > 0
-    ? `<span class="expiring-pill urgent">⚠️ ${urgentHours.toFixed(1)} óra 10 napon belül lejár</span>`
-    : (lejart > 0 ? `<span class="expiring-pill ok">${lejart.toFixed(1)} óra lejárt</span>` : '');
+    ? `<span class="expiring-pill urgent">⚠️ ${fmtOra(urgentHours)} óra 10 napon belül lejár</span>`
+    : (lejart > 0 ? `<span class="expiring-pill ok">${fmtOra(lejart)} óra lejárt</span>` : '');
 
   box.innerHTML = `
     <details class="expiring-box ${urgentHours > 0 ? 'has-urgent' : ''}">
@@ -3344,7 +3344,9 @@ function buildDecisionEmailHtml(dolgozoNeve, statusz, tipus, kezdoDatum, vegDatu
     const csusztathatoEl = document.getElementById('uiCsusztathato');
     if (csusztathatoEl) {
       const balance = parseFloat(otStats.osszesCsusztathato) || 0;
-      csusztathatoEl.innerText = balance.toFixed(1) + " óra";
+      window.myCsusztathatoOra = balance;
+      csusztathatoEl.dataset.ora = String(balance);
+      csusztathatoEl.innerText = fmtOra(balance) + " óra";
 
       if (balance < 0) {
         csusztathatoEl.className = "stat-tile-value text-danger";
@@ -3487,7 +3489,8 @@ async function loadMyRequests() {
     console.log("[Saját Pult] Kiszámolt csúsztatható egyenleg:", otStats.osszesCsusztathato);
 
     // 🎯 4. A CSÚSZTATHATÓ KÁRTYA FRISSÍTÉSE A FELÜLETEN (Minden lehetséges elem azonosítót frissítünk)
-    const targetValue = `${otStats.osszesCsusztathato} óra`;
+    window.myCsusztathatoOra = Number(otStats.osszesCsusztathato) || 0;
+    const targetValue = `${fmtOra(otStats.osszesCsusztathato)} óra`;
     const possibleElements = [
       document.getElementById('uiCsusztathato'),
       document.getElementById('uiCsusztathatoOra'),
@@ -3498,7 +3501,7 @@ async function loadMyRequests() {
     ];
 
     possibleElements.forEach(el => {
-      if (el) el.innerText = targetValue;
+      if (el) { el.innerText = targetValue; el.dataset.ora = String(window.myCsusztathatoOra); }
     });
     renderMyExpiringHours(otStats);
 
@@ -3565,6 +3568,22 @@ async function loadMyRequests() {
   }
 
   let pendingNegativeRequest = null;
+
+  // Óraszám kijelzése kerekítés nélkül: 0,25 / 0,5 / 0,75 pontosan megjelenik (max. 2 tizedes)
+  function fmtOra(h) {
+    const n = Number(h);
+    if (!isFinite(n)) return '0';
+    return (Math.round(n * 100) / 100).toLocaleString('hu-HU', { maximumFractionDigits: 2 });
+  }
+  window.fmtOra = fmtOra;
+
+  // A Saját pult csúsztatható egyenlegének pontos (nem kijelzett) értéke
+  function getMyCsusztathatoOra() {
+    if (typeof window.myCsusztathatoOra === 'number') return window.myCsusztathatoOra;
+    const el = document.getElementById('uiCsusztathato') || document.getElementById('bankedHoursDisplay');
+    if (el && el.dataset && el.dataset.ora !== undefined) return Number(el.dataset.ora) || 0;
+    return parseFloat(String(el ? el.innerText : '0').replace(',', '.')) || 0;
+  }
 
   function calculateRequestedHours(kezdoIdo, vegIdo) {
     if (!kezdoIdo || !vegIdo) return 0;
@@ -4021,9 +4040,7 @@ async function handleFormSubmit(e) {
 
   // 🎯 Mínuszos egyenleg ellenőrzése KIZÁRÓLAG Csúsztatás esetén!
   if (isCsusztatas && requestedHours > 0) {
-    const balanceEl = document.getElementById('uiCsusztathato') || document.getElementById('bankedHoursDisplay');
-    const currentBalanceText = balanceEl ? balanceEl.innerText : '0';
-    const currentBalance = parseFloat(currentBalanceText) || 0;
+    const currentBalance = getMyCsusztathatoOra();
 
     if (requestedHours > currentBalance) {
       pendingNegativeRequest = {
@@ -4042,8 +4059,8 @@ async function handleFormSubmit(e) {
 
       const reqDisplay = document.getElementById('negReqHours');
       const availDisplay = document.getElementById('negAvailHours');
-      if (reqDisplay) reqDisplay.innerText = requestedHours.toFixed(1);
-      if (availDisplay) availDisplay.innerText = currentBalance.toFixed(1);
+      if (reqDisplay) reqDisplay.innerText = fmtOra(requestedHours);
+      if (availDisplay) availDisplay.innerText = fmtOra(currentBalance);
       
       const reasonInput = document.getElementById('negativeBalanceReason');
       if (reasonInput) reasonInput.value = "";
@@ -6713,7 +6730,7 @@ function renderTeamBalances(selectedGroup = 'ALL') {
       <div class="my-1 text-center" style="max-height: 85px; overflow-y: auto;">
         ${details.map(d => {
           const dateStr = d.datum || d.date || d;
-          const hoursStr = d.oraszam ? ` (${Number(d.oraszam).toFixed(1)}h)` : '';
+          const hoursStr = d.oraszam ? ` (${fmtOra(d.oraszam)}h)` : '';
           const daysRemaining = d.daysRemaining !== undefined ? d.daysRemaining : null;
 
           let badgeClass = 'bg-light text-dark border';
@@ -6778,23 +6795,23 @@ function renderTeamBalances(selectedGroup = 'ALL') {
           <div class="small text-muted" style="font-size: 0.75rem;">${escapeHtml(emp.effectiveGroup || emp.csoport || '')}</div>
         </td>
         <td data-label="Hétköznapi Túlmunka">
-          <span class="fw-bold text-dark">${emp.hetkoznapiTulora || 0} óra</span>
+          <span class="fw-bold text-dark">${fmtOra(emp.hetkoznapiTulora || 0)} óra</span>
           ${renderExpirationBadges(emp.hetkoznapiDetails || emp.hetkoznapiDates)}
           ${makePayoutBtn('Hétköznapi túlmunka', emp.hetkoznapiTulora, 'hetkoznapi')}
         </td>
         <td data-label="Hétvégi Esemény">
-          <span class="fw-bold text-dark">${emp.hetvegiTulora || 0} óra</span>
+          <span class="fw-bold text-dark">${fmtOra(emp.hetvegiTulora || 0)} óra</span>
           ${renderExpirationBadges(emp.hetvegiDetails || emp.hetvegiDates)}
           ${makePayoutBtn('Hétvégi esemény', emp.hetvegiTulora, 'hetvegi')}
         </td>
         <td data-label="Éjszakai Esemény">
-          <span class="fw-bold text-dark">${emp.ejszakaiTulora || 0} óra</span>
+          <span class="fw-bold text-dark">${fmtOra(emp.ejszakaiTulora || 0)} óra</span>
           ${renderExpirationBadges(emp.ejszakaiDetails || emp.ejszakaiDates)}
           ${makePayoutBtn('Éjszakai esemény', emp.ejszakaiTulora, 'ejszakai')}
         </td>
         <td data-label="Lejárt" class="table-danger">
           <span class="fw-bold ${emp.lejartTulora > 0 ? 'text-danger' : 'text-muted'}">
-            ${emp.lejartTulora || 0} óra
+            ${fmtOra(emp.lejartTulora || 0)} óra
           </span>
           ${renderExpirationBadges(emp.lejartDetails || emp.lejartDates)}
           ${makePayoutBtn('Lejárt túlmunka (kötelező kifizetés)', emp.lejartTulora, 'lejart')}
@@ -6842,7 +6859,7 @@ function openPayoutModal(userEmail, userName, typeLabel, availableHours, categor
   if (document.getElementById('payoutCategory')) document.getElementById('payoutCategory').value = categoryKey;
   if (document.getElementById('payoutUserName')) document.getElementById('payoutUserName').innerText = userName;
   if (document.getElementById('payoutTypeDisplay')) document.getElementById('payoutTypeDisplay').innerText = typeLabel;
-  if (document.getElementById('payoutAvailableDisplay')) document.getElementById('payoutAvailableDisplay').innerText = availableHours + " óra";
+  if (document.getElementById('payoutAvailableDisplay')) document.getElementById('payoutAvailableDisplay').innerText = fmtOra(availableHours) + " óra";
 
   const hoursInput = document.getElementById('payoutHours');
   if (hoursInput) {
@@ -7009,7 +7026,7 @@ async function submitPayoutRequest(event) {
     // 🎯 4. ÉRTESÍTŐ E-MAIL KIKÜLDÉSE A MANAGERNEK (ha nem automatikus a jóváhagyás)
     if (targetStatus !== 'approved' && effectiveApproverEmail) {
       const subject = `💸 Új túlmunka kifizetési kérelem jóváhagyásra - ${targetName}`;
-      const bodyText = `Szia!\n\n${currentUserProfile?.nev || 'Egy vezető'} túlmunka kifizetési kérelmet nyújtott be ${targetName} részére:\n- Óraszám: ${hours} óra\n- Összeg: ${osszeg.toLocaleString('hu-HU')} Ft\n- Sáv: ${sav}\n- Indoklás: ${reason}\n\nKérlek, lépj be a Távollét Kezelő Portálra a kérelem elbírálásához!`;
+      const bodyText = `Szia!\n\n${currentUserProfile?.nev || 'Egy vezető'} túlmunka kifizetési kérelmet nyújtott be ${targetName} részére:\n- Óraszám: ${fmtOra(hours)} óra\n- Összeg: ${osszeg.toLocaleString('hu-HU')} Ft\n- Sáv: ${sav}\n- Indoklás: ${reason}\n\nKérlek, lépj be a Távollét Kezelő Portálra a kérelem elbírálásához!`;
       
       const htmlBody = `
         <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; max-width: 500px;">
@@ -7017,7 +7034,7 @@ async function submitPayoutRequest(event) {
           <p><strong>${currentUserProfile?.nev || 'Egy vezető'}</strong> kifizetési kérelmet rögzített <strong>${targetName}</strong> munkatárs részére, ami jóváhagyásra vár nálad:</p>
           <table style="width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 14px;">
             <tr><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; color: #64748b;">Munkatárs:</td><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; font-weight: bold;">${targetName}</td></tr>
-            <tr><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; color: #64748b;">Kifizetendő óra:</td><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; font-weight: bold;">${hours} óra</td></tr>
+            <tr><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; color: #64748b;">Kifizetendő óra:</td><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; font-weight: bold;">${fmtOra(hours)} óra</td></tr>
             <tr><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; color: #64748b;">Összeg:</td><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; font-weight: bold; color: #16a34a;">${osszeg.toLocaleString('hu-HU')} Ft</td></tr>
             <tr><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; color: #64748b;">Sáv:</td><td style="padding: 6px; border-bottom: 1px solid #f1f5f9;">${sav}</td></tr>
             <tr><td style="padding: 6px; color: #64748b;">Indoklás:</td><td style="padding: 6px; font-style: italic;">${reason}</td></tr>
@@ -7231,7 +7248,7 @@ async function loadOvertimeApprovals() {
           <td data-label="Munkatárs" class="text-start ps-3 fw-bold">${empName}</td>
           <td data-label="Igénylő Felettes">${submitterName}</td>
           <td data-label="Típus"><span class="badge bg-secondary">${safeEscape(r.overtime_category || r.kategoria || 'Túlmunka')}</span></td>
-          <td data-label="Óraszám" class="fw-bold">${r.orak || r.oraszam || 0} óra</td>
+          <td data-label="Óraszám" class="fw-bold">${fmtOra(r.orak || r.oraszam || 0)} óra</td>
           <td data-label="Sáv">${bandBadge}</td>
           <td data-label="Összeg"><span class="fw-bold text-success">${currentFormatted}</span></td>
           <td data-label="Indoklás" class="text-start" style="min-width: 240px; max-width: 420px; white-space: normal;">
@@ -7443,7 +7460,7 @@ async function loadApprovalHistory() {
           <td data-label="Munkatárs" class="text-start ps-3 fw-bold">${empName}</td>
           <td data-label="Igénylő">${submitterName}</td>
           <td data-label="Típus"><span class="badge bg-secondary">${safeEscape(r.overtime_category || r.tipus || 'Túlmunka')}</span></td>
-          <td data-label="Óraszám">${r.orak || r.oraszam || 0} óra</td>
+          <td data-label="Óraszám">${fmtOra(r.orak || r.oraszam || 0)} óra</td>
           <td data-label="Sáv"><span class="badge bg-info text-dark">${safeEscape(r.sav || '-')}</span></td>
           <td data-label="Összeg" class="fw-bold text-success">${amountFormatted}</td>
           <td data-label="Indoklás" class="text-start"><small class="text-muted d-block text-truncate" style="max-width: 140px;" title="${safeEscape(r.megjegyzes || '-')}">${safeEscape(r.megjegyzes || '-')}</small></td>
@@ -7584,7 +7601,7 @@ function renderOvertimeApprovalsTable() {
           <small class="text-muted" style="font-size:0.75rem;">${groupName}</small>
         </td>
         <td data-label="Típus"><span class="badge bg-secondary">${safeEscape(r.overtime_category || r.kategoria || 'Túlmunka')}</span></td>
-        <td data-label="Óraszám" class="fw-bold">${r.orak || r.oraszam || 0} óra</td>
+        <td data-label="Óraszám" class="fw-bold">${fmtOra(r.orak || r.oraszam || 0)} óra</td>
         <td data-label="Sáv">${bandBadge}</td>
         <td data-label="Összeg">${amountDisplay}</td>
         <td data-label="Indoklás" class="text-start">${reasonDisplay}</td>
@@ -7867,18 +7884,18 @@ async function submitChallenge() {
     const diffMins = (h2 * 60 + m2) - (h1 * 60 + m1);
     const requestedHours = diffMins > 0 ? (diffMins / 60) : 0;
 
-    const availableHours = parseFloat(document.getElementById('uiCsusztathato')?.innerText || document.getElementById('bankedHoursDisplay')?.innerText) || 0;
+    const availableHours = getMyCsusztathatoOra();
 
-    if (reqDisplay) reqDisplay.innerText = requestedHours.toFixed(1);
-    if (availDisplay) availDisplay.innerText = availableHours.toFixed(1);
+    if (reqDisplay) reqDisplay.innerText = fmtOra(requestedHours);
+    if (availDisplay) availDisplay.innerText = fmtOra(availableHours);
 
     // 🎯 KIZÁRÓLAG Csúsztatás esetén jelenítjük meg a mínuszos figyelmeztetést!
     if (isCsusztatas && requestedHours > availableHours) {
       alertEl.className = "alert alert-warning mt-2";
       alertEl.innerHTML = `
         <strong>⚠️ Mínuszos csúsztatás kérelem!</strong> <br>
-        A kért távollét hossza: <strong>${requestedHours.toFixed(1)}</strong> óra. <br>
-        Elérhető egyenleged: <strong>${availableHours.toFixed(1)}</strong> óra. <br>
+        A kért távollét hossza: <strong>${fmtOra(requestedHours)}</strong> óra. <br>
+        Elérhető egyenleged: <strong>${fmtOra(availableHours)}</strong> óra. <br>
         <span class="small text-dark fw-bold"><i class="bi bi-info-circle me-1"></i> A gombra kattintva meg kell indokolnod a felettesednek a mínuszba lépést!</span>
       `;
       alertEl.classList.remove('hidden');
@@ -9710,7 +9727,7 @@ async function loadPayoutHistory() {
           <td data-label="Munkatárs" class="text-start fw-bold text-dark">${name}</td>
           <td data-label="Dátum / Hónap"><span class="badge bg-light text-dark border">${dateStr}</span></td>
           <td data-label="Kategória">${cat}</td>
-          <td data-label="Óra" class="fw-semibold">${hours} óra</td>
+          <td data-label="Óra" class="fw-semibold">${fmtOra(hours)} óra</td>
           <td data-label="Összeg">
             <span class="fw-bold text-success">${amount > 0 ? amount.toLocaleString('hu-HU') + ' Ft' : '-'}</span>
             ${isChallenged ? '<small class="text-warning d-block" style="font-size:0.7rem;">(Módosítva)</small>' : ''}
