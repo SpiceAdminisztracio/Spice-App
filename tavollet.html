@@ -398,6 +398,21 @@
     background-image: repeating-linear-gradient(45deg, rgba(100,116,139,0.18) 0 2px, transparent 2px 7px) !important;
   }
 
+  /* ⏳ Saját pult: lejáró csúsztatható órák */
+  .expiring-box { border: 1px solid #e2e8f0; border-radius: 14px; background: #f8fafc; padding: 10px 12px; }
+  .expiring-box.has-urgent { border-color: #f59e0b; background: #fffbeb; }
+  .expiring-summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+  .expiring-summary::-webkit-details-marker { display: none; }
+  .expiring-chevron { transition: transform 0.2s ease; color: #475569; }
+  details[open] > .expiring-summary .expiring-chevron { transform: rotate(180deg); }
+  .expiring-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed #e2e8f0; font-size: 0.82rem; }
+  .expiring-row:last-child { border-bottom: 0; }
+  .expiring-pill { font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .expiring-pill.urgent { background: #fde68a; color: #92400e; }
+  .expiring-pill.soon { background: #fef3c7; color: #92400e; }
+  .expiring-pill.ok { background: #e2e8f0; color: #334155; }
+  .expiring-pill.none { background: #dcfce7; color: #166534; }
+
   /* Jelölések: soha ne törjön több sorba (pl. EHO / RHO) */
   .gantt-badge, .matrix-badge, .absence-badge {
     white-space: nowrap !important;
@@ -1031,10 +1046,13 @@
             <span class="stat-tile-value" id="uiCsusztathato">- óra</span>
           </div>
           <div class="stat-tile primary-tile">
-            <span class="stat-tile-title">🎯 HO e héten</span>
+            <span class="stat-tile-title" id="uiHoTileTitle">🎯 HO e héten</span>
             <span class="stat-tile-value" id="uiHoMaradek">- nap</span>
           </div>
         </div>
+
+        <!-- ⏳ Lejáró csúsztatható órák (minden munkatársnak) -->
+        <div id="myExpiringHours" class="mt-2"></div>
 
         <!-- Kinyitható részletes keretadatok -->
         <div class="accordion accordion-flush mt-1" id="profileAccordion">
@@ -1059,11 +1077,11 @@
                   <strong id="uiIdoaranyos">- nap</strong>
                 </div>
                 <div class="d-flex justify-content-between py-1 border-bottom">
-                  <span>E heti HO keret:</span>
+                  <span id="uiHoKeretLabel">E heti HO keret:</span>
                   <span><span id="uiHoKeret">0</span> nap</span>
                 </div>
                 <div class="d-flex justify-content-between py-1 border-bottom">
-                  <span>E héten rögzített HO:</span>
+                  <span id="uiHoKivettLabel">E héten rögzített HO:</span>
                   <span class="text-danger fw-bold"><span id="uiHoKivett">0</span> nap</span>
                 </div>
                 <div class="d-flex justify-content-between py-1">
@@ -1095,7 +1113,7 @@
               <option value="">Kérlek válassz...</option>
               <option value="Szabadság">Szabadság (szabályos, 15 nappal előre)</option>
               <option value="Betegszabadság">Betegszabadság (azonnali)</option>
-              <option value="Home office">Home office (heti keret szerint, azonnali)</option>
+              <option value="Home office">Home office (keret szerint, azonnali)</option>
               <option value="Rendkívüli HO">Rendkívüli HO (betegség, félévente max. 3 nap)</option>
               <option value="Egyedi HO">Egyedi HO (15 nappal előre, felettes + HR)</option>
               <option value="Apa szabadság">Apa szabadság (azonnali)</option>
@@ -1610,7 +1628,7 @@
                   <th class="text-start">Munkatárs</th>
                   <th>Csoport / Pozíció</th>
                   <th>Idei Keret</th>
-                  <th>Heti HO</th>
+                  <th>HO keret</th>
                   <th>Jogosultság</th>
                   <th class="text-end px-3">Művelet</th>
                 </tr>
@@ -1862,7 +1880,11 @@
               <input type="number" class="form-control form-control-sm" id="addUserTavalyiKeret" value="0" required>
             </div>
             <div class="col-md-4">
-              <label class="form-label small fw-bold">Heti HO Keret (nap, alap: 2)</label>
+              <label class="form-label small fw-bold" id="addUserHoKeretLabel">Heti HO Keret (nap, alap: 2)</label>
+              <select class="form-select form-select-sm mb-1" id="addUserHoMod" onchange="syncHoModeInput('add')">
+                <option value="heti">Heti keret (alap szabály)</option>
+                <option value="havi">Havi keret, tömbösíthető</option>
+              </select>
               <input type="number" class="form-control form-control-sm" id="addUserHoKeret" value="2" min="0" max="5" required>
             </div>
           </div>
@@ -2030,7 +2052,11 @@
               <input type="number" class="form-control form-control-sm" id="editUserTavalyiKeret" required>
             </div>
             <div class="col-md-3">
-              <label class="form-label small fw-bold">Heti HO Keret (nap, alap: 2)</label>
+              <label class="form-label small fw-bold" id="editUserHoKeretLabel">Heti HO Keret (nap, alap: 2)</label>
+              <select class="form-select form-select-sm mb-1" id="editUserHoMod" onchange="syncHoModeInput('edit')">
+                <option value="heti">Heti keret (alap szabály)</option>
+                <option value="havi">Havi keret, tömbösíthető</option>
+              </select>
               <input type="number" class="form-control form-control-sm" id="editUserHoKeret" min="0" max="5" required>
             </div>
           </div>
@@ -2580,6 +2606,23 @@ function getSelectedOffDays() {
   return [1, 2, 3, 4, 5].filter(n => document.getElementById('offDay' + n)?.checked).join(',');
 }
 
+// Admin: HO keret típusa (heti / havi tömbösíthető) szerinti mezőbeállítás
+function syncHoModeInput(prefix, keepValue) {
+  const mode = document.getElementById(prefix + 'UserHoMod')?.value;
+  const input = document.getElementById(prefix + 'UserHoKeret');
+  const label = document.getElementById(prefix + 'UserHoKeretLabel');
+  if (!input) return;
+  if (mode === 'havi') {
+    input.max = HO_MONTHLY_ABS_MAX;
+    if (label) label.innerText = 'Havi HO Keret (nap / hónap)';
+    if (!keepValue) input.value = 10;
+  } else {
+    input.max = HO_WEEKLY_ABS_MAX;
+    if (label) label.innerText = 'Heti HO Keret (nap, alap: 2)';
+    if (!keepValue) input.value = 2;
+  }
+}
+
 // Admin: munkaidő-változás dátummező megjelenítése
 function toggleWorkHoursDate() {
   const sel = document.getElementById('editUserNapiLimit');
@@ -2721,6 +2764,65 @@ function isPersonWorkday(profileOrEmail, ymd) {
 // Túlóra-számításhoz: a fix szabadnapon 0 óra az elvárt munkaidő (minden ledolgozott óra túlmunka)
 function dailyLimitResolver(profile) {
   return (ymd) => isOffDayFor(profile, ymd) ? 0 : getDailyLimitFor(profile, ymd);
+}
+
+// ⏳ SAJÁT PULT: a felhasználó még felhasználható túlóráinak lejárati listája
+function renderMyExpiringHours(otStats) {
+  const box = document.getElementById('myExpiringHours');
+  if (!box || !otStats) return;
+
+  const fmtDate = (ymd) => String(ymd).replace(/-/g, '.') + '.';
+  const addDays = (ymd, n) => { const d = hoParseDate(ymd); d.setDate(d.getDate() + n); return hoYMD(d); };
+  const catLabel = { weekday: 'hétköznapi', weekend: 'hétvégi / rendezvény', night: 'éjszakai' };
+
+  const items = [];
+  [['weekday', otStats.hetkoznapiDetails], ['weekend', otStats.hetvegiDetails], ['night', otStats.ejszakaiDetails]]
+    .forEach(([cat, list]) => (list || []).forEach(d => {
+      if (Number(d.oraszam) > 0 && d.daysRemaining >= 0) {
+        items.push({ cat, datum: d.datum, ora: Number(d.oraszam), napok: d.daysRemaining, lejar: addDays(d.datum, 45), nyito: !!d.nyito });
+      }
+    }));
+  items.sort((a, b) => a.napok - b.napok);
+
+  const urgentHours = items.filter(i => i.napok <= 10).reduce((a, i) => a + i.ora, 0);
+  const nyito = Number(otStats.nyitoMaradek) || 0;
+  const lejart = Number(otStats.lejartTulora) || 0;
+
+  if (!items.length && nyito <= 0 && lejart <= 0) {
+    box.innerHTML = '';
+    return;
+  }
+
+  const rows = items.map(i => {
+    const cls = i.napok <= 10 ? 'urgent' : (i.napok <= 20 ? 'soon' : 'ok');
+    const when = i.napok === 0 ? 'ma lejár!' : `${i.napok} nap múlva lejár`;
+    return `<div class="expiring-row">
+      <span><strong>${i.ora.toFixed(1)} óra</strong> <span class="text-muted">· ${i.nyito ? 'nyitó egyenleg (' + fmtDate(i.datum) + ')' : fmtDate(i.datum) + ' · ' + catLabel[i.cat]}</span></span>
+      <span class="expiring-pill ${cls}" title="Lejárat: ${fmtDate(i.lejar)}">${i.napok <= 10 ? '⚠️ ' : ''}${when}</span>
+    </div>`;
+  }).join('');
+
+  const nyitoRow = ''; // a nyitó egyenleg 2026.10.01-i tételként a listában szerepel
+
+  const lejartRow = lejart > 0 ? `<div style="font-size:0.75rem;color:#dc2626;margin-top:8px;"><i class="bi bi-x-circle me-1"></i>${lejart.toFixed(1)} óra már lejárt (45 napnál régebbi), ez nem csúsztatható le.</div>` : '';
+
+  // Összecsukott alapállapot: csak a fejléc látszik, kattintásra nyílik le a lista
+  const summaryPill = urgentHours > 0
+    ? `<span class="expiring-pill urgent">⚠️ ${urgentHours.toFixed(1)} óra 10 napon belül lejár</span>`
+    : (lejart > 0 ? `<span class="expiring-pill ok">${lejart.toFixed(1)} óra lejárt</span>` : '');
+
+  box.innerHTML = `
+    <details class="expiring-box ${urgentHours > 0 ? 'has-urgent' : ''}">
+      <summary class="expiring-summary">
+        <span class="fw-bold small">⏳ Csúsztatható óráid lejárata</span>
+        <span class="d-flex align-items-center gap-2">${summaryPill}<i class="bi bi-chevron-down expiring-chevron"></i></span>
+      </summary>
+      <div class="pt-2">
+        <div class="text-muted mb-1" style="font-size:0.72rem;">A túlóra a keletkezését követő 45 napig használható fel (a nyitó egyenleg 2026.10.01-jén keletkezettnek számít). A csúsztatás először a nyitó egyenlegből, utána a hétköznapi, és csak ha ez nem elég, a hétvégi és éjszakai órákból fogy – mindig a legrégebbitől. A kifizetés csak a saját kategóriájából fogy. Ami 45 napon belül nem fogyott el, az lejár.</div>
+        ${rows || '<div class="small text-muted py-1">Jelenleg nincs felhasználható túlórád.</div>'}${nyitoRow}
+        ${lejartRow}
+      </div>
+    </details>`;
 }
 
 // Inaktív vagy már kilépett munkatárs (statisztikához megmarad, a napi nézetekből kimarad)
@@ -3252,6 +3354,7 @@ function buildDecisionEmailHtml(dolgozoNeve, statusz, tipus, kezdoDatum, vegDatu
         csusztathatoEl.className = "stat-tile-value text-primary";
       }
     }
+    renderMyExpiringHours(otStats);
 
     updateTabVisibility(profile);
     await loadMyRequests();
@@ -3397,6 +3500,7 @@ async function loadMyRequests() {
     possibleElements.forEach(el => {
       if (el) el.innerText = targetValue;
     });
+    renderMyExpiringHours(otStats);
 
     // 5. TÁBLÁZAT ÉS NAPTÁR KIRAJZOLÁSA
     renderMyRequestsTable(userRequestsCache);
@@ -3597,6 +3701,53 @@ function hoWeeklyMaxFor(profile) {
   return Math.max(0, Math.min(HO_WEEKLY_ABS_MAX, n)); // egyénileg beállítható keret
 }
 
+// 📅 EGYÉNI HAVI HO KERET (tömbösíthető): a profil ho_mod = 'havi' esetén
+// a ho_keret havi napszámot jelent, a heti 2 nap / 3 irodai nap szabály rá nem vonatkozik.
+const HO_MONTHLY_ABS_MAX = 23;
+function isMonthlyHOProfile(profile) {
+  return hoNorm(profile?.ho_mod || '') === 'havi';
+}
+function hoMonthlyMaxFor(profile) {
+  const n = Number(profile?.ho_keret);
+  if (profile?.ho_keret === null || profile?.ho_keret === undefined || profile?.ho_keret === '' || isNaN(n)) return 10;
+  return Math.max(0, Math.min(HO_MONTHLY_ABS_MAX, n));
+}
+const HU_MONTHS_HO = ['január', 'február', 'március', 'április', 'május', 'június', 'július', 'augusztus', 'szeptember', 'október', 'november', 'december'];
+
+// Egy adott hónap (YYYY-MM) havi HO kerete
+function calcMonthlyHOAllowance(monthKey, requests, profile) {
+  const used = new Set();
+  hoUserRequests(requests, profile?.email).forEach(r => {
+    if (getHOKind(r.tipus) !== 'regular') return;
+    hoWorkdaysBetween(r.kezdo_datum || r.datum, r.veg_datum || r.kezdo_datum || r.datum, profile?.email)
+      .filter(d => d.startsWith(monthKey))
+      .forEach(d => used.add(d));
+  });
+  const allowed = hoMonthlyMaxFor(profile);
+  return { allowed, used: used.size, usedDays: Array.from(used), remaining: Math.max(0, allowed - used.size) };
+}
+
+function checkMonthlyHOConditions(startStr, endStr, requests, profile) {
+  const reqDays = hoWorkdaysBetween(startStr, endStr, profile?.email);
+  if (!reqDays.length) return { ok: false, reason: 'A választott időszakban nincs munkanapod.' };
+
+  const byMonth = {};
+  reqDays.forEach(d => { const k = d.substring(0, 7); (byMonth[k] = byMonth[k] || []).push(d); });
+
+  for (const monthKey of Object.keys(byMonth)) {
+    const a = calcMonthlyHOAllowance(monthKey, requests, profile);
+    const newDays = byMonth[monthKey].filter(d => !a.usedDays.includes(d));
+    if (a.used + newDays.length > a.allowed) {
+      const [y, m] = monthKey.split('-');
+      return {
+        ok: false,
+        reason: `${y}. ${HU_MONTHS_HO[Number(m) - 1]}: havi ${a.allowed} HO nap jár, már rögzítve: ${a.used} nap, most kért: ${newDays.length} nap. A fel nem használt HO nem vihető át másik hónapra.`
+      };
+    }
+  }
+  return { ok: true, reason: '' };
+}
+
 // Egy adott hét HO kerete
 function calcWeeklyHOAllowance(monday, requests, profile, extraAbsenceDays = []) {
   const workdays = hoWeekWorkdays(monday, profile?.email);
@@ -3727,7 +3878,11 @@ function checkEgyediHOConditions(startStr, endStr, profile) {
 
 function checkHORequest(tipus, startStr, endStr, requests, profile) {
   const kind = getHOKind(tipus);
-  if (kind === 'regular') return checkWeeklyHOConditions(startStr, endStr, requests, profile);
+  if (kind === 'regular') {
+    return isMonthlyHOProfile(profile)
+      ? checkMonthlyHOConditions(startStr, endStr, requests, profile)
+      : checkWeeklyHOConditions(startStr, endStr, requests, profile);
+  }
   if (kind === 'sick') return checkSickHOConditions(startStr, endStr, requests, profile);
   if (kind === 'egyedi') return checkEgyediHOConditions(startStr, endStr, profile);
   return { ok: true, reason: '' };
@@ -3735,6 +3890,7 @@ function checkHORequest(tipus, startStr, endStr, requests, profile) {
 
 // Új szabadság után megmarad-e a 3 irodai nap a már rögzített sima HO-k mellett?
 function findHOConflictsAfterAbsence(startStr, endStr, requests, profile) {
+  if (isMonthlyHOProfile(profile)) return []; // havi keretnél nincs heti irodai nap szabály
   const newDays = hoWorkdaysBetween(startStr, endStr, profile?.email);
   const conflicts = [];
   hoGroupByWeek(newDays).forEach(week => {
@@ -3747,10 +3903,16 @@ function findHOConflictsAfterAbsence(startStr, endStr, requests, profile) {
 // Saját pult HO csempe és részletek
 function renderHODashboard() {
   if (!currentUserProfile) return;
-  const week = calcWeeklyHOAllowance(hoMondayOf(new Date()), userRequestsCache, currentUserProfile);
+  const monthly = isMonthlyHOProfile(currentUserProfile);
+  const week = monthly
+    ? calcMonthlyHOAllowance(getLocalYMD().substring(0, 7), userRequestsCache, currentUserProfile)
+    : calcWeeklyHOAllowance(hoMondayOf(new Date()), userRequestsCache, currentUserProfile);
   const sick = calcSickHOUsage(userRequestsCache, currentUserProfile);
 
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.innerText = val; };
+  set('uiHoTileTitle', monthly ? '🎯 HO e hónapban' : '🎯 HO e héten');
+  set('uiHoKeretLabel', monthly ? 'E havi HO keret (tömbösíthető):' : 'E heti HO keret:');
+  set('uiHoKivettLabel', monthly ? 'E hónapban rögzített HO:' : 'E héten rögzített HO:');
   set('uiHoMaradek', `${week.remaining} nap`);
   set('uiHoKeret', week.allowed);
   set('uiHoKivett', week.used);
@@ -3770,7 +3932,11 @@ function updateHORuleInfo() {
   let text = '';
   let cls = 'alert-info';
 
-  if (kind === 'regular') {
+  if (kind === 'regular' && isMonthlyHOProfile(currentUserProfile)) {
+    const mk = (start || getLocalYMD()).substring(0, 7);
+    const a = calcMonthlyHOAllowance(mk, userRequestsCache, currentUserProfile);
+    text = `Egyéni havi keret: ${a.allowed} HO nap (${HU_MONTHS_HO[Number(mk.substring(5, 7)) - 1]}: még ${a.remaining} nap), tömbösítve is kivehető. A fel nem használt HO nem vihető át másik hónapra. Automatikusan jóváhagyva.`;
+  } else if (kind === 'regular') {
     text = `Heti max. ${hoWeeklyMaxFor(currentUserProfile)} HO nap, úgy, hogy legalább ${hoMinOfficeDaysFor(currentUserProfile)} irodai nap megmaradjon. A fel nem használt HO nem vihető át másik hétre. Automatikusan jóváhagyva.`;
   } else if (kind === 'sick') {
     const s = calcSickHOUsage(userRequestsCache, currentUserProfile, start || null);
@@ -4854,7 +5020,7 @@ async function executeSubmitCreativeOpinion() {
             <small class="text-muted">${escapeHtml(u.pozicio || '-')}</small>
           </td>
           <td data-label="Idei keret"><code>${u.eves_keret || 0} nap</code></td>
-          <td data-label="Heti HO"><code>${hoWeeklyMaxFor(u)} nap</code></td>
+          <td data-label="HO keret"><code>${isMonthlyHOProfile(u) ? hoMonthlyMaxFor(u) + ' nap/hó' : hoWeeklyMaxFor(u) + ' nap/hét'}</code></td>
           <td data-label="Jogosultság"><span class="badge ${badgeClass}">${role}</span></td>
           <td data-label="Művelet" class="text-end px-2">
             <button class="btn btn-sm btn-outline-primary fw-bold py-1 px-2" onclick="openEditUserModal('${u.email}')">
@@ -4899,7 +5065,9 @@ async function executeSubmitCreativeOpinion() {
   renderWorkHoursHistory(user.email);
   setVal('editUserEvesKeret', user.eves_keret || 20);
   setVal('editUserTavalyiKeret', user.tavalyi_keret || 0);
-  setVal('editUserHoKeret', hoWeeklyMaxFor(user));
+  setVal('editUserHoMod', isMonthlyHOProfile(user) ? 'havi' : 'heti');
+  setVal('editUserHoKeret', isMonthlyHOProfile(user) ? hoMonthlyMaxFor(user) : hoWeeklyMaxFor(user));
+  syncHoModeInput('edit', true);
 
   setVal('editUserStatus', (user.statusz || 'aktív').toLowerCase().trim());
   setVal('editUserBelepett', user.belepett || '');
@@ -4964,6 +5132,7 @@ async function saveEditUser(event) {
     eves_keret: Number(document.getElementById('editUserEvesKeret')?.value) || 0,
     tavalyi_keret: Number(document.getElementById('editUserTavalyiKeret')?.value) || 0,
     ho_keret: Number(document.getElementById('editUserHoKeret')?.value) || 0,
+    ho_mod: document.getElementById('editUserHoMod')?.value === 'havi' ? 'havi' : 'heti',
     
     // 🎯 STÁTUSZ BEÁLLÍTÁSA
     statusz: statuszVal,
@@ -5072,6 +5241,7 @@ async function saveEditUser(event) {
     if (defHo !== undefined && defHo !== '' && document.getElementById('addUserHoKeret')) {
       document.getElementById('addUserHoKeret').value = Math.max(0, Math.min(HO_WEEKLY_ABS_MAX, Number(defHo)));
     }
+    if (document.getElementById('addUserHoMod')) { document.getElementById('addUserHoMod').value = 'heti'; syncHoModeInput('add', true); }
     modal.show();
   }
 
@@ -5094,6 +5264,7 @@ async function saveEditUser(event) {
       eves_keret: Number(document.getElementById('addUserEvesKeret').value) || 0,
       tavalyi_keret: Number(document.getElementById('addUserTavalyiKeret').value) || 0,
       ho_keret: Number(document.getElementById('addUserHoKeret').value) || 0,
+      ho_mod: document.getElementById('addUserHoMod')?.value === 'havi' ? 'havi' : 'heti',
       statusz: document.getElementById('addUserStatus').value,
       belepett: (belepettVal && belepettVal.trim() !== '') ? belepettVal : null,
       kilepett: (kilepettVal && kilepettVal.trim() !== '') ? kilepettVal : null,
@@ -5284,11 +5455,12 @@ async function saveEditUser(event) {
     });
 
     // 🎯 JAVÍTOTT POSTGREST DÁTUMSZŰRÉS
-    const { data: requestsData, error: reqErr } = await supabaseClient
+    // Lapozva: egy hónapban az egész cég kérelmei (pl. napi HO-k) könnyen meghaladják az 1000 sort
+    const { data: requestsData, error: reqErr } = await fetchAllPaged(() => supabaseClient
       .from('leave_requests')
       .select('*')
       .lte('kezdo_datum', endDateStr)
-      .or(`veg_datum.gte.${startDateStr},and(veg_datum.is.null,kezdo_datum.gte.${startDateStr})`);
+      .or(`veg_datum.gte.${startDateStr},and(veg_datum.is.null,kezdo_datum.gte.${startDateStr})`));
 
     if (reqErr) throw reqErr;
 
@@ -5541,20 +5713,13 @@ function renderGlobalTimeline(data) {
             text: '#ffffff' 
           };
         } 
-        // 🎯 2. A SZABÁLYOS HO MARAD A MEGSZOKOTT NORMÁL ZÖLD SZÍN (nem tér el a többitől)
-        else if (lowerType.includes('home office') || lowerType.includes('ho')) {
-          config = { 
-            short: 'HO', 
-            bg: '#84cc16',   // A megszokott naptári zöld
-            text: '#1a4731' 
-          };
-        } 
-        // 3. Egyéb típusok az ABSENCE_RENDER_MAP alapján vagy alapértelmezetten
+        // 🎯 2. Minden más típus a jelmagyarázat szerinti színt kapja (ugyanaz, mint a többi naptárban)
         else {
-          config = ABSENCE_RENDER_MAP[rawType] || { 
-            short: rawType ? rawType.substring(0, 2).toUpperCase() : 'SZ', 
-            bg: '#84cc16', 
-            text: '#1a4731' 
+          const calMarker = getLeaveTypeMarker(rawType);
+          config = ABSENCE_RENDER_MAP[calMarker] || ABSENCE_RENDER_MAP[rawType] || {
+            short: rawType ? rawType.substring(0, 2).toUpperCase() : '?',
+            bg: '#64748b',
+            text: '#ffffff'
           };
         }
 
@@ -6019,182 +6184,164 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
     }
   });
 
-  let weekdayOvertimes = [];
-  let weekendOvertimes = [];
-  let nightOvertimes = [];
-  let expiredOvertimes = [];
-  let lejartTulora = 0;
+  // =====================================================================
+  // ⏳ IDŐRENDI (FIFO) ELSZÁMOLÁS
+  // - minden túlóra a keletkezése napjától 45 napig használható fel (a 46. naptól lejár)
+  // - FIFO: mindig a legrégebbi óra fogy el. A nyitó egyenleg 2026.10.01-jén "keletkezett" hétköznapi tétel:
+  //   elsőként fogy, és a többi túlórához hasonlóan 45 nap után lejár
+  // - csúsztatás: nyitó egyenleg -> hétköznapi (legrégebbitől) -> csak ha ez nem elég: hétvégi + éjszakai (legrégebbitől)
+  // - kifizetés: KIZÁRÓLAG a saját kategóriájából (overtime_category), az orak mezőben megadott óraszámmal
+  // - a levonás a csúsztatás napján / a kifizetés beküldésének napján történik, az akkor elérhető órákból;
+  //   ami így felhasználásra került, az kivett, nem jár le utólag; ami 45 napon belül nem fogyott el, az lejárt
+  // =====================================================================
+  const DAY_MS = 1000 * 60 * 60 * 24;
+  const ymdDiff = (fromYmd, toYmd) => Math.round((new Date(toYmd + 'T00:00:00') - new Date(fromYmd + 'T00:00:00')) / DAY_MS);
+  const todayYmd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const cleanYmd = (v) => {
+    let x = v ? String(v).substring(0, 10).replace(/\./g, '-').replace(/\//g, '-') : '';
+    if (x.endsWith('-')) x = x.slice(0, -1);
+    return x;
+  };
 
+  // 3. Túlóra-"tételek" napi bontásban, kategóriánként
+  const buckets = [];
   Object.values(dailyLogsMap).forEach(dayObj => {
     const entryDate = new Date(dayObj.datum + 'T12:00:00');
     const dayOfWeek = entryDate.getDay();
-    
     const isShiftedWorkday = cleanShiftedWorkdays.includes(dayObj.datum);
     const isWeekendDay = (dayOfWeek === 0 || dayOfWeek === 6) && !isShiftedWorkday;
     const isHoliday = cleanHolidays.includes(dayObj.datum);
 
-    const diffDays = Math.floor((today - entryDate) / (1000 * 60 * 60 * 24));
-    const isExpired = diffDays > 45;
-
-    // 1. Éjszakai órák
-    if (dayObj.nightHours > 0) {
-      if (isExpired) {
-        lejartTulora += dayObj.nightHours;
-        expiredOvertimes.push({ datum: entryDate, orak: dayObj.nightHours });
-      } else {
-        nightOvertimes.push({ datum: entryDate, orak: dayObj.nightHours });
-      }
-    }
-
-    // 2. Hétvégi / rendezvény órák
-    if (dayObj.weekendHours > 0) {
-      if (isExpired) {
-        lejartTulora += dayObj.weekendHours;
-        expiredOvertimes.push({ datum: entryDate, orak: dayObj.weekendHours });
-      } else {
-        weekendOvertimes.push({ datum: entryDate, orak: dayObj.weekendHours });
-      }
-    }
-
-    // 3. Hétköznapi túlmunka órák
-    let weekdayOvertimeHrs = 0;
+    if (dayObj.nightHours > 0) buckets.push({ ymd: dayObj.datum, datum: entryDate, cat: 'night', orak: dayObj.nightHours });
+    if (dayObj.weekendHours > 0) buckets.push({ ymd: dayObj.datum, datum: entryDate, cat: 'weekend', orak: dayObj.weekendHours });
 
     // 🎯 TÚLMUNKA CSAK AKKOR KELETKEZHET, HA A DOLGOZÓ TÉNYLEGESEN DOLGOZOTT IS AZNAP!
+    let weekdayOvertimeHrs = 0;
     if (dayObj.daytimeHours > 0) {
       if (isWeekendDay || isHoliday) {
-        // Hétvégén vagy ünnepnapon minden ledolgozott nappali óra túlmunka
-        weekdayOvertimeHrs = dayObj.daytimeHours;
+        weekdayOvertimeHrs = dayObj.daytimeHours; // hétvégén / ünnepnapon minden nappali óra túlmunka
       } else {
-        // Munkanapon: ha van szabadság (8 óra), az elvárt munkaidő 0 órára csökken,
-        // így a ledolgozott órák teljes egészében túlmunkává válnak.
-        // Ha részleges csúsztatás volt (pl. 4 óra), az elvárt munka 4 órára csökken.
+        // Munkanapon az elvárt munkaidőt csökkenti az aznapi távollét (szabadság, részleges csúsztatás)
         const effectiveDailyLimit = Math.max(0, limitFor(dayObj.datum) - (dayObj.leaveHours || 0));
         weekdayOvertimeHrs = Math.max(0, dayObj.daytimeHours - effectiveDailyLimit);
       }
     }
-
-    if (weekdayOvertimeHrs > 0) {
-      if (isExpired) {
-        lejartTulora += weekdayOvertimeHrs;
-        expiredOvertimes.push({ datum: entryDate, orak: weekdayOvertimeHrs });
-      } else {
-        weekdayOvertimes.push({ datum: entryDate, orak: weekdayOvertimeHrs });
-      }
-    }
+    if (weekdayOvertimeHrs > 0) buckets.push({ ymd: dayObj.datum, datum: entryDate, cat: 'weekday', orak: weekdayOvertimeHrs });
   });
+  buckets.sort((x, y) => x.ymd.localeCompare(y.ymd));
+  if (remainingInitial > 0) {
+    // A nyitó egyenleg a legelső tétel (azonos napon is megelőzi a többit)
+    buckets.unshift({ ymd: CUTOFF_DATE, datum: new Date(CUTOFF_DATE + 'T12:00:00'), cat: 'weekday', orak: remainingInitial, nyito: true });
+    remainingInitial = 0;
+  }
 
-  weekdayOvertimes.sort((a, b) => a.datum - b.datum);
-  weekendOvertimes.sort((a, b) => a.datum - b.datum);
-  nightOvertimes.sort((a, b) => a.datum - b.datum);
-  expiredOvertimes.sort((a, b) => a.datum - b.datum);
-
-  const deductFrom = (array, amount) => {
-    let remaining = amount;
-    array.forEach(item => {
-      if (remaining > 0 && item.orak > 0) {
-        const deduct = Math.min(item.orak, remaining);
-        item.orak -= deduct;
-        remaining -= deduct;
+  const expiredOvertimes = [];
+  let lejartTulora = 0;
+  const expireUntil = (atYmd) => {
+    buckets.forEach(bk => {
+      if (bk.orak > 0 && ymdDiff(bk.ymd, atYmd) > 45) {
+        lejartTulora += bk.orak;
+        expiredOvertimes.push({ datum: bk.datum, orak: bk.orak, nyito: !!bk.nyito });
+        bk.orak = 0;
       }
     });
-    return remaining;
   };
 
-  // 4. CSAK A 2026-10-01 UTÁNI KIVETT CSÚSZTATÁSOK LEVONÁSA
-  let totalUsedHours = 0;
+  // FIFO levonás. onlyCat: kifizetésnél csak az adott kategória (a nyitó egyenleg hétköznapi tétel)
+  const consume = (amount, atYmd, onlyCat) => {
+    let rest = amount;
+    const pass = (catOk) => {
+      for (const bk of buckets) {
+        if (rest <= 0) break;
+        if (bk.orak <= 0 || bk.ymd > atYmd || !catOk(bk.cat)) continue;
+        const dd = Math.min(bk.orak, rest);
+        bk.orak -= dd;
+        rest -= dd;
+      }
+    };
+    if (onlyCat) {
+      pass(c => c === onlyCat);                 // kifizetés: csak a saját kategóriája
+    } else {
+      pass(c => c === 'weekday');               // csúsztatás: előbb a hétköznapi órák
+      pass(c => c !== 'weekday');               // ha nem elég: hétvégi és éjszakai, a legrégebbitől
+    }
+    return rest;
+  };
+
+  // 4. Események: jóváhagyott csúsztatások és nem elutasított kifizetések
+  const events = [];
   (leaveRequests || []).forEach(r => {
-    const reqStart = r.kezdo_datum ? String(r.kezdo_datum).substring(0, 10).replace(/\./g, '-').replace(/\//g, '-') : '';
-    if (!reqStart || reqStart < CUTOFF_DATE) return; 
+    const reqStart = cleanYmd(r.kezdo_datum);
+    if (!reqStart || reqStart < CUTOFF_DATE) return;
 
     const reqEmail = normalizeStr(r.user_email || '');
     const rawStatus = normalizeStr(r.status || r.statusz || r.allapot);
     const isApproved = (rawStatus === 'approved' || rawStatus.includes('jovahagy') || rawStatus === 'elfogadva');
     const t = normalizeStr(r.tipus || r.jelleg);
+    if (!(reqEmail === targetEmail && isApproved && (t.includes('csusztatas') || t === 'cs'))) return;
 
-    if (reqEmail === targetEmail && isApproved && (t.includes('csusztatas') || t === 'cs')) {
-      let hours = Number(r.oraszam || r.orak) || 0;
-      
-      if (!hours && r.kezdo_ido && r.veg_ido) {
-        const [h1, m1] = String(r.kezdo_ido).split(':').map(Number);
-        const [h2, m2] = String(r.veg_ido).split(':').map(Number);
-        if (!isNaN(h1) && !isNaN(h2)) hours = (h2 + m2 / 60) - (h1 + m1 / 60);
-      }
-
-      if (!hours) {
-        const intervalStr = String(r.ido || r.időtartam || r.ido_intervallum || '').trim();
-        if (intervalStr.includes('-')) {
-          const parts = intervalStr.split('-').map(s => s.trim());
-          if (parts.length === 2 && parts[0].includes(':') && parts[1].includes(':')) {
-            const [h1, m1] = parts[0].split(':').map(Number);
-            const [h2, m2] = parts[1].split(':').map(Number);
-            hours = (h2 + m2 / 60) - (h1 + m1 / 60);
-          }
+    let hours = Number(r.oraszam || r.orak) || 0;
+    if (!hours && r.kezdo_ido && r.veg_ido) {
+      const [h1, m1] = String(r.kezdo_ido).split(':').map(Number);
+      const [h2, m2] = String(r.veg_ido).split(':').map(Number);
+      if (!isNaN(h1) && !isNaN(h2)) hours = (h2 + (m2 || 0) / 60) - (h1 + (m1 || 0) / 60);
+    }
+    if (!hours) {
+      const intervalStr = String(r.ido || r.időtartam || r.ido_intervallum || '').trim();
+      if (intervalStr.includes('-')) {
+        const parts = intervalStr.split('-').map(x => x.trim());
+        if (parts.length === 2 && parts[0].includes(':') && parts[1].includes(':')) {
+          const [h1, m1] = parts[0].split(':').map(Number);
+          const [h2, m2] = parts[1].split(':').map(Number);
+          hours = (h2 + m2 / 60) - (h1 + m1 / 60);
         }
       }
-
-      totalUsedHours += (hours > 0 ? hours : limitFor(reqStart));
     }
+    if (!(hours > 0)) hours = limitFor(reqStart);
+    // A jövőbeli csúsztatás a mai napon "foglalja le" a legrégebbi órákat
+    events.push({ ymd: reqStart < todayYmd ? reqStart : todayYmd, ord: 1, kind: 'leave', hours });
   });
 
-  let uncoveredHours = totalUsedHours;
-  if (uncoveredHours > 0) {
-    if (remainingInitial > 0) {
-      const deductInit = Math.min(remainingInitial, uncoveredHours);
-      remainingInitial -= deductInit;
-      uncoveredHours -= deductInit;
-    }
-    if (uncoveredHours > 0) uncoveredHours = deductFrom(weekdayOvertimes, uncoveredHours);
-    if (uncoveredHours > 0) uncoveredHours = deductFrom(weekendOvertimes, uncoveredHours);
-    if (uncoveredHours > 0) uncoveredHours = deductFrom(nightOvertimes, uncoveredHours);
-  }
-
-  // 5. KIFIZETÉSEK LEVONÁSA
   (overtimeDecisions || []).forEach(d => {
-    const decDate = d.datum ? String(d.datum).substring(0, 10).replace(/\./g, '-').replace(/\//g, '-') : (d.created_at ? String(d.created_at).substring(0, 10).replace(/\./g, '-').replace(/\//g, '-') : '');
+    const decDate = cleanYmd(d.datum) || cleanYmd(d.created_at);
     if (!decDate || decDate < CUTOFF_DATE) return;
-
     const emailMatch = normalizeStr(d.user_email || d.munkatars_email || '') === targetEmail;
     const rawStatus = normalizeStr(d.status);
     const isNotRejected = rawStatus !== 'rejected' && rawStatus !== 'elutasitva';
     const isPayout = d.tipus === 'Kifizetés' || d.tipus === 'payout';
+    if (!(emailMatch && isNotRejected && isPayout)) return;
 
-    if (emailMatch && isNotRejected && isPayout) {
-      const payoutHours = Number(d.orak || d.orak_szama) || 0;
-      const cat = normalizeStr(d.overtime_category || d.kategoria || '');
-
-      let remainingPayout = payoutHours;
-      if (cat.includes('hetveg')) {
-        remainingPayout = deductFrom(weekendOvertimes, remainingPayout);
-      } else if (cat.includes('ejszak')) {
-        remainingPayout = deductFrom(nightOvertimes, remainingPayout);
-      } else {
-        if (remainingInitial > 0) {
-          const deductInit = Math.min(remainingInitial, remainingPayout);
-          remainingInitial -= deductInit;
-          remainingPayout -= deductInit;
-        }
-        if (remainingPayout > 0) remainingPayout = deductFrom(weekdayOvertimes, remainingPayout);
-        if (remainingPayout > 0) remainingPayout = deductFrom(weekendOvertimes, remainingPayout);
-        if (remainingPayout > 0) remainingPayout = deductFrom(nightOvertimes, remainingPayout);
-      }
-
-      if (remainingPayout > 0 && remainingInitial > 0) {
-        const deductInit = Math.min(remainingInitial, remainingPayout);
-        remainingInitial -= deductInit;
-        remainingPayout -= deductInit;
-      }
-    }
+    const cat = normalizeStr(d.overtime_category || d.kategoria || '');
+    const onlyCat = cat.includes('hetveg') ? 'weekend' : (cat.includes('ejszak') ? 'night' : 'weekday');
+    // A kifizetés a beküldés napján történt (a datum mező csak az első érintett nap)
+    let at = cleanYmd(d.created_at) || decDate;
+    if (at > todayYmd) at = todayYmd;
+    events.push({ ymd: at, ord: 2, kind: 'payout', hours: Number(d.orak || d.orak_szama) || 0, onlyCat });
   });
+
+  events.sort((x, y) => x.ymd.localeCompare(y.ymd) || x.ord - y.ord);
+
+  let uncoveredHours = 0;
+  events.forEach(ev => {
+    expireUntil(ev.ymd);
+    const left = consume(ev.hours, ev.ymd, ev.kind === 'payout' ? ev.onlyCat : null);
+    if (ev.kind === 'leave') uncoveredHours += left; // fedezet nélküli csúsztatás: mínusz egyenleg
+  });
+  expireUntil(todayYmd);
+
+  const nyitoBucket = buckets.find(bk => bk.nyito);
+  remainingInitial = nyitoBucket ? nyitoBucket.orak : 0;
+  const weekdayOvertimes = buckets.filter(bk => bk.cat === 'weekday').map(bk => ({ datum: bk.datum, orak: bk.orak, nyito: !!bk.nyito }));
+  const weekendOvertimes = buckets.filter(bk => bk.cat === 'weekend').map(bk => ({ datum: bk.datum, orak: bk.orak }));
+  const nightOvertimes = buckets.filter(bk => bk.cat === 'night').map(bk => ({ datum: bk.datum, orak: bk.orak }));
+  expiredOvertimes.sort((x, y) => x.datum - y.datum);
 
   let hetkoznapiLogolt = weekdayOvertimes.reduce((acc, i) => acc + i.orak, 0);
   let hetvegiTulora = weekendOvertimes.reduce((acc, i) => acc + i.orak, 0);
   let ejszakaiTulora = nightOvertimes.reduce((acc, i) => acc + i.orak, 0);
 
-  let hetkoznapiTulora = remainingInitial + hetkoznapiLogolt;
-
-  if (uncoveredHours > 0) {
-    hetkoznapiTulora -= uncoveredHours;
-  }
+  let hetkoznapiTulora = hetkoznapiLogolt; // a nyitó egyenleg maradéka már benne van (hétköznapi tétel)
+  if (uncoveredHours > 0) hetkoznapiTulora -= uncoveredHours;
 
   let osszesCsusztathato = hetkoznapiTulora + hetvegiTulora + ejszakaiTulora;
 
@@ -6202,14 +6349,15 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
     return arr
       .filter(item => item.orak > 0)
       .map(item => {
-        const diffDays = Math.floor((today - item.datum) / (1000 * 60 * 60 * 24));
         const y = item.datum.getFullYear();
         const m = String(item.datum.getMonth() + 1).padStart(2, '0');
         const d = String(item.datum.getDate()).padStart(2, '0');
+        const diffDays = Math.round((today - new Date(`${y}-${m}-${d}T00:00:00`)) / (1000 * 60 * 60 * 24));
         return {
           datum: `${y}-${m}-${d}`,
           oraszam: parseFloat(item.orak.toFixed(2)),
-          daysRemaining: 45 - diffDays
+          daysRemaining: 45 - diffDays,
+          nyito: !!item.nyito
         };
       });
   };
@@ -6223,6 +6371,7 @@ function calculateUserOvertimeBalances(userEmail, overtimeLogs, leaveRequests, o
     ejszakaiDetails: formatDetails(nightOvertimes),
     lejartTulora: parseFloat(lejartTulora.toFixed(2)),
     lejartDetails: formatDetails(expiredOvertimes),
+    nyitoMaradek: parseFloat(Math.max(0, remainingInitial).toFixed(2)),
     osszesCsusztathato: parseFloat(osszesCsusztathato.toFixed(2))
   };
 }
@@ -6353,6 +6502,11 @@ async function loadTeamBalances() {
     const teamEmails = teamProfiles
       .map(e => String(e.email || '').trim().toLowerCase())
       .filter(Boolean);
+    // Kis/nagybetű-független lekérés: az eredeti és a kisbetűs írásmód is (a párosítás utána normalizálva történik)
+    const teamEmailVariants = Array.from(new Set(teamProfiles
+      .map(p => String(p.email || '').trim())
+      .filter(Boolean)
+      .flatMap(e => [e, e.toLowerCase()])));
 
     if (teamEmails.length === 0) {
       tbody.innerHTML = `<tr><td colspan="6" class="text-muted py-4 text-center">Nincs megjeleníthető munkatárs e-mail címmel.</td></tr>`;
@@ -6372,7 +6526,8 @@ async function loadTeamBalances() {
         const { data, error } = await supabaseClient
           .from(tableName)
           .select('*')
-          .in('user_email', teamEmails)
+          .in('user_email', teamEmailVariants)
+          .order('id', { ascending: true })
           .range(from, from + step - 1);
 
         if (error) throw error;
@@ -6440,18 +6595,9 @@ async function loadTeamBalances() {
         (empEmailNorm && safeNorm(d.user_email || d.munkatars_email) === empEmailNorm)
       );
 
-      const evesKeret = Number(emp.eves_szabadsag_keret || emp.alapszabadsag) || 20;
-      
-      let kivettIdei = 0;
-      userRequests.forEach(r => {
-        const st = String(r.status || r.statusz || '').toLowerCase();
-        const t = String(r.tipus || r.jelleg || '').toLowerCase();
-        if ((st.includes('approved') || st.includes('jovahagy') || st.includes('elfogad')) && (t.includes('szabadsag') || t === 'sz')) {
-          kivettIdei += Number(r.napok_szama || r.napok || 1);
-        }
-      });
-
-      const maradek = evesKeret - kivettIdei;
+      // Szabadság: ugyanaz a számítás, mint a Saját pulton
+      const evesKeret = Number(emp.eves_keret) || 0;
+      const maradek = evesKeret - calculateUserLeaveStats(emp.email, userRequests, emp.nev).kivettIdei;
       
       // 🎯 RUGALMAS MUNKAIDŐ KERET BEOLVASÁS A PROFILBÓL
 
@@ -6477,6 +6623,7 @@ async function loadTeamBalances() {
         ejszakaiDetails: otStats.ejszakaiDetails || [],
         lejartTulora: otStats.lejartTulora,
         lejartDetails: otStats.lejartDetails || [],
+        nyitoMaradek: otStats.nyitoMaradek || 0,
         osszesCsusztathato: otStats.osszesCsusztathato
       };
     });
@@ -6662,47 +6809,25 @@ function calculateAffectedDatesForPayout(userEmail, categoryKey, requestedHours)
   const emp = (window.teamBalancesCache || teamBalancesCache || []).find(e => normalizeStr(e.email) === normalizeStr(userEmail));
   if (!emp) return [];
 
-  let details = [];
+  // Ugyanaz a szabály, mint az egyenleg-számításban: FIFO, kizárólag a kifizetés kategóriájából;
+  // a nyitó egyenleg (dátum nélküli, nem zárol napot) a hétköznapi kategória legrégebbi része
   const cat = String(categoryKey || '').toLowerCase();
-  if (cat.includes('hetveg')) {
-    details = emp.hetvegiDetails || emp.hetvegiDates || [];
-  } else if (cat.includes('ejszak')) {
-    details = emp.ejszakaiDetails || emp.ejszakaiDates || [];
-  } else if (cat.includes('lejart')) {
-    details = emp.lejartDetails || emp.lejartDates || [];
-  } else {
-    details = emp.hetkoznapiDetails || emp.hetkoznapiDates || [];
-  }
-
-  // Időrendi sorrendbe állítjuk a napokat
-  const sorted = [...details].sort((a, b) => {
-    const dA = new Date(a.datum || a.date || a);
-    const dB = new Date(b.datum || b.date || b);
-    return dA - dB;
-  });
+  const isWeekend = cat.includes('hetveg');
+  const isNight = cat.includes('ejszak');
+  const own = (isWeekend ? emp.hetvegiDetails : isNight ? emp.ejszakaiDetails : emp.hetkoznapiDetails) || [];
+  const list = own.map(x => ({ datum: String(x.datum || x.date || '').substring(0, 10), orak: Number(x.oraszam || x.hours || x.orak || 0), nyito: !!x.nyito }))
+    .filter(x => x.datum && x.orak > 0)
+    .sort((x, y) => (y.nyito - x.nyito) || x.datum.localeCompare(y.datum));
 
   let remaining = Number(requestedHours) || 0;
   const affected = [];
-
-  for (const item of sorted) {
+  for (const item of list) {
     if (remaining <= 0) break;
-    let dStr = '';
-    let itemHours = 0;
-
-    if (typeof item === 'object' && item !== null) {
-      dStr = String(item.datum || item.date || '').substring(0, 10);
-      itemHours = Number(item.oraszam || item.hours || item.orak || 0);
-    } else {
-      dStr = String(item).substring(0, 10);
-      itemHours = remaining;
-    }
-
-    if (dStr && !affected.includes(dStr)) {
-      affected.push(dStr);
-    }
-    remaining -= (itemHours > 0 ? itemHours : remaining);
+    // a nyitó egyenlegből fedezett rész nem zárol napot a Projektnyilvántartásban
+    if (!item.nyito && !affected.includes(item.datum)) affected.push(item.datum);
+    remaining -= item.orak;
   }
-
+  affected.sort();
   return affected;
 }
 
@@ -7952,7 +8077,7 @@ async function submitChallenge() {
       let from = 0;
       const step = 1000;
       while (true) {
-        const { data, error } = await supabaseClient.from(tableName).select('*').range(from, from + step - 1);
+        const { data, error } = await supabaseClient.from(tableName).select('*').order('id', { ascending: true }).range(from, from + step - 1);
         if (error) throw error;
         if (data && data.length > 0) allRecords.push(...data);
         if (!data || data.length < step) break;
@@ -8602,6 +8727,7 @@ async function renderTeamLeaveMatrix() {
       const { data: chunk, error: lErr } = await supabaseClient
         .from('leave_requests')
         .select('*')
+        .order('id', { ascending: true })
         .range(from, from + step - 1);
 
       if (lErr) throw lErr;
@@ -8863,7 +8989,7 @@ async function renderTeamLeaveMatrix() {
       });
 
       const tavalyiIndulo = Number(emp.tavalyi_keret ?? 0);
-      const ideiTeljes = Number(emp.eves_keret ?? 20);
+      const ideiTeljes = Number(emp.eves_keret) || 0; // ugyanúgy, mint a Saját pulton
 
       let tavalyiKivett = 0;
       let ideiKivett = 0;
@@ -8900,36 +9026,13 @@ async function renderTeamLeaveMatrix() {
           }
         }
 
-        const reqStartYear = startD ? startD.getFullYear() : viewYr;
-        if (isApproved && (reqStartYear === viewYr || String(sRaw).includes(String(viewYr)))) {
-          if (!startD || startD <= cutoffDate) {
-            let days = Number(l.oraszam ? l.oraszam / getDailyLimitFor(emp, String(l.kezdo_datum || '').substring(0, 10)) : 0);
-
-            if (!days && startD) {
-              const actualEndD = endD || startD;
-              if (startD.getTime() === actualEndD.getTime()) {
-                days = 1;
-              } else {
-                let dCount = 0;
-                let currD = new Date(startD.getTime());
-                while (currD <= actualEndD && cutoffDate >= currD) {
-                  if (isPersonWorkday(emp, hoYMD(currD))) dCount++;
-                  currD.setDate(currD.getDate() + 1);
-                }
-                days = dCount > 0 ? dCount : 1;
-              }
-            }
-
-            if (!days) days = 1;
-
-            if (typeInfo.isTavalyi) {
-              tavalyiKivett += days;
-            } else if (typeInfo.isIdei) {
-              ideiKivett += days;
-            }
-          }
-        }
       });
+
+      // Kivett napok: UGYANAZ a számítás, mint a Saját pulton és az adatbázis-lekérdezésben
+      // (a választott év munkanapjai, jóváhagyott + függő, fix szabadnap / ünnep / ledolgozós szombat kezelése)
+      const mxStats = calculateUserLeaveStats(emp.email, userLeaves, emp.nev, viewYr);
+      tavalyiKivett = mxStats.kivettTavalyi;
+      ideiKivett = mxStats.kivettIdei;
 
       const ideiAranyos = Math.round((ideiTeljes / 12) * targetMonthNum);
       const ideiMaradek = ideiTeljes - ideiKivett;
@@ -9319,7 +9422,7 @@ async function updateTeamBudgetWidget(selectedGroup = 'ALL') {
     // 🎯 2. JÓVÁHAGYOTT KIFIZETÉSEK LEVONÁSA
     let totalApprovedPayoutFt = 0;
     try {
-      const { data: decisions } = await supabaseClient.from('overtime_decisions').select('*');
+      const { data: decisions } = await fetchAllPaged(() => supabaseClient.from('overtime_decisions').select('*'));
       (decisions || []).forEach(d => {
         const st = safeNorm(d.status);
         const isApproved = st.includes('approved') || st.includes('jovahagy') || st.includes('kifizet') || st.includes('elfogad') || st === 'challenged' || st.includes('modosit');

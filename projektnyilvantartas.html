@@ -58,7 +58,7 @@
       transition: background-color 0.15s ease, color 0.15s ease !important;
     }
 
-    input, textarea, select, .form-control, .form-select {
+    input:not([type="checkbox"]):not([type="radio"]), textarea, select, .form-control, .form-select {
       user-select: text;
       font-size: 16px !important;
       font-family: inherit !important;
@@ -69,7 +69,7 @@
       box-shadow: none !important;
     }
 
-    input:focus, textarea:focus, select:focus, .form-control:focus, .form-select:focus {
+    input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus, select:focus, .form-control:focus, .form-select:focus {
       border-color: #2563eb !important;
       box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15) !important;
     }
@@ -218,6 +218,17 @@
 
     .overtime-cell { background-color: #fef2f2 !important; color: #dc2626 !important; font-weight: bold; }
     .sunday-col { background-color: #f1f5f9 !important; font-weight: bold; }
+    .cjp-table th, .cjp-table td { font-size: 0.8rem; padding: 5px 8px !important; }
+    /* Jelölőnégyzetek és választógombok: valódi pipa / pötty látszódjon */
+    input[type="checkbox"].form-check-input:not([role="switch"]) { width: 1.1em; height: 1.1em; border: 1.5px solid #94a3b8; border-radius: 4px; cursor: pointer; }
+    input[type="radio"].form-check-input { cursor: pointer; border: 1.5px solid #94a3b8; }
+    .form-check-input:checked { background-color: #2563eb !important; border-color: #2563eb !important; }
+    .form-check-input:indeterminate { background-color: #2563eb !important; border-color: #2563eb !important; }
+    .cjp-row { cursor: pointer; }
+    .cjp-row:has(.cjp-cb:checked) td { background-color: #eff6ff !important; }
+    .cjp-table td label { font-weight: inherit; }
+    .client-cat-table th, .client-cat-table td { font-size: 0.76rem; padding: 4px 5px !important; white-space: nowrap; }
+    .client-cat-table td:first-child { white-space: normal; }
     .holiday-col { background-color: #f8fafc !important; border: 1px solid #e2e8f0 !important; }
     .offday-cell { background-image: repeating-linear-gradient(135deg, rgba(100,116,139,0.14) 0 3px, transparent 3px 7px) !important; }
 
@@ -589,12 +600,31 @@
         <input class="form-check-input" type="radio" name="searchType" id="stClient" value="client" onclick="toggleSearchUI()">
         <label class="form-check-label fw-bold small" for="stClient">Ügyfél (Éves)</label>
       </div>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="searchType" id="stClientYear" value="clientyear" onclick="toggleSearchUI()">
+        <label class="form-check-label fw-bold small" for="stClientYear">Ügyfél – éves kimutatás</label>
+      </div>
     </div>
 
     <div class="mb-3 position-relative">
       <label class="form-label fw-bold small" id="qLabel" for="qJob">Keresés</label>
       <input class="form-control" id="qJob" oninput="handleStatSearchInput()" placeholder="Gépelj..." autocomplete="off">
       <div id="clientDropdown"><div id="clientListItems"></div></div>
+    </div>
+
+    <div id="yearFilterGroup" class="mb-3" style="display:none;">
+      <label class="form-label fw-bold small" for="qYear">Év</label>
+      <select class="form-select" id="qYear"></select>
+    </div>
+
+    <div id="periodFilterGroup" class="mb-3">
+      <label class="form-label fw-bold small">Időszak (opcionális)</label>
+      <div class="d-flex gap-2 align-items-center">
+        <input type="date" class="form-control" id="qDateFrom" title="Ettől (ezt a napot is beleértve)">
+        <span class="text-muted">–</span>
+        <input type="date" class="form-control" id="qDateTo" title="Eddig (ezt a napot is beleértve)">
+      </div>
+      <small class="text-muted d-block mt-1" style="font-size:0.72rem;">Üresen hagyva a teljes időszakot kéri le. Elég csak az egyik dátumot megadni.</small>
     </div>
 
     <div id="workerFilterGroup" class="mb-3">
@@ -605,6 +635,7 @@
     <button class="btn btn-info text-white w-100 fw-bold mt-2 py-2" onclick="runMainQuery()" id="qBtn">Lekérés</button>
     
     <div id="qResult" class="mt-4">
+      <div id="clientJobPicker"></div>
       <div class="d-flex justify-content-between align-items-center mb-3">
         <div id="projectHeader" class="flex-grow-1"></div>
         <button id="exportBtn" class="btn btn-outline-success btn-sm ms-2" style="display:none;" onclick="downloadReport()">
@@ -1618,8 +1649,8 @@
         allData.push(...data);
       }
 
-      if (!data || data.length < step) break;
-      from += step;
+      if (!data || data.length === 0) break; // csak üres lapnál állunk meg
+      from += data.length;
     }
   } catch (e) {
     console.error("Projektek lekérdezési hiba:", e);
@@ -2367,24 +2398,49 @@
 
   function toggleSearchUI() {
     const t = document.querySelector('input[name="searchType"]:checked').value;
-    document.getElementById('qLabel').innerText = t === 'client' ? 'Ügyfél neve' : 'Munkaszám / Keresés';
-    document.getElementById('workerFilterGroup').style.display = t === 'client' ? 'none' : 'block';
+    const isClientType = t === 'client' || t === 'clientyear';
+    document.getElementById('qLabel').innerText = isClientType ? 'Ügyfél neve' : 'Munkaszám / Keresés';
+    document.getElementById('workerFilterGroup').style.display = t === 'job' ? 'block' : 'none';
+    const pg = document.getElementById('periodFilterGroup');
+    if (pg) pg.style.display = t === 'job' ? 'block' : 'none';
+    const yg = document.getElementById('yearFilterGroup');
+    if (yg) yg.style.display = t === 'clientyear' ? 'block' : 'none';
+    if (t === 'clientyear') populateStatYearSelect();
+    // Fülváltáskor a korábbi eredmény eltűnik, hogy ne keveredjen a két nézet
+    const ph = document.getElementById('projectHeader'), ml = document.getElementById('mList');
+    if (ph) ph.innerHTML = '';
+    if (ml) ml.innerHTML = '';
+    const cjp = document.getElementById('clientJobPicker');
+    if (cjp) cjp.innerHTML = '';
+    window.clientYearState = null;
+    lastReportData = null;
   }
 
   async function runMainQuery() {
     const type = document.querySelector('input[name="searchType"]:checked').value;
     const val = document.getElementById('qJob').value.trim();
-    const btn = event.currentTarget || document.getElementById('qBtn');
+    const btn = document.getElementById('qBtn');
 
     if (!val) return showModal("Írj be egy munkaszámot vagy ügyfelet!", "Hiba");
 
     if (btn) btn.disabled = true;
     try {
       let res;
-      if (type === 'client') {
-        res = await getClientYearlyReportFromSupabase(val);
+      if (type === 'clientyear') {
+        // Először a munkaszám-lista jelenik meg; a táblázat a kipipált munkaszámokra készül el
+        const year = document.getElementById('qYear')?.value || new Date().getFullYear();
+        await loadClientYearJobPicker(val, year);
+        return;
+      } else if (type === 'client') {
+        res = await getClientReportFromSupabase(val);
       } else {
-        res = await getProjectReportFromSupabase(val);
+        const dFrom = document.getElementById('qDateFrom')?.value || '';
+        const dTo = document.getElementById('qDateTo')?.value || '';
+        if (dFrom && dTo && dFrom > dTo) {
+          showModal("A kezdő dátum nem lehet későbbi a záró dátumnál!", "Hiba");
+          return;
+        }
+        res = await getProjectReportFromSupabase(val, dFrom, dTo);
       }
       
       lastReportData = res; 
@@ -2396,33 +2452,41 @@
     }
   }
 
-  async function getProjectReportFromSupabase(jobId) {
+  async function getProjectReportFromSupabase(jobId, dateFrom = '', dateTo = '') {
   let logs = [];
   let fromIdx = 0;
   const step = 1000;
 
   // PAGINÁLT LEKÉRDEZÉS A SUPABASE 1000 SOROS LIMITJÉNEK FELOLDÁSÁRA
   while (true) {
-    const { data: chunk, error } = await supabaseClient
+    let q = supabaseClient
       .from('work_logs')
       .select('*')
-      .eq('munkaszam', jobId)
-      .range(fromIdx, fromIdx + step - 1);
+      .eq('munkaszam', jobId);
+    if (dateFrom) q = q.gte('datum', dateFrom); // opcionális időszak
+    if (dateTo) q = q.lte('datum', dateTo);
+    const { data: chunk, error } = await q.order('id', { ascending: true }).range(fromIdx, fromIdx + step - 1);
 
     if (error) throw error;
     if (chunk && chunk.length > 0) logs.push(...chunk);
-    if (!chunk || chunk.length < step) break;
-    fromIdx += step;
+    if (!chunk || chunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+    fromIdx += chunk.length;
   }
 
   const proj = allMasterProjects.find(p => p.id === jobId);
   const clientName = proj ? proj.vevo : (logs.length > 0 ? logs[0].vevo : "Ismeretlen");
   const projectName = proj ? proj.munka : (logs.length > 0 ? logs[0].munka : "");
 
-  return await buildReportObject(logs, clientName, projectName, `Riport_${jobId}`);
+  const periodSuffix = (dateFrom || dateTo) ? `_${dateFrom || 'kezdettol'}_${dateTo || 'mai napig'}`.replace(/ /g, '') : '';
+  const rep = await buildReportObject(logs, clientName, projectName, `Riport_${jobId}${periodSuffix}`);
+  rep.jobId = jobId;
+  rep.periodFrom = dateFrom;
+  rep.periodTo = dateTo;
+  return rep;
 }
 
-async function getClientYearlyReportFromSupabase(clientName) {
+// Korábbi ügyfél-statisztika: teljes időszak, havi bontás csapatonként és munkatársanként
+async function getClientReportFromSupabase(clientName) {
   const cleanClient = clientName.trim();
 
   const matchingJobIds = allMasterProjects
@@ -2441,12 +2505,12 @@ async function getClientYearlyReportFromSupabase(clientName) {
         .from('work_logs')
         .select('*')
         .or(`munkaszam.in.(${formattedJobIds}),vevo.ilike.%${cleanClient}%`)
-        .range(fromIdx, fromIdx + step - 1);
+        .order('id', { ascending: true }).range(fromIdx, fromIdx + step - 1);
 
       if (error) throw error;
       if (chunk && chunk.length > 0) logs.push(...chunk);
-      if (!chunk || chunk.length < step) break;
-      fromIdx += step;
+      if (!chunk || chunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+      fromIdx += chunk.length;
     }
   } else {
     while (true) {
@@ -2454,16 +2518,657 @@ async function getClientYearlyReportFromSupabase(clientName) {
         .from('work_logs')
         .select('*')
         .ilike('vevo', `%${cleanClient}%`)
-        .range(fromIdx, fromIdx + step - 1);
+        .order('id', { ascending: true }).range(fromIdx, fromIdx + step - 1);
 
       if (error) throw error;
       if (chunk && chunk.length > 0) logs.push(...chunk);
-      if (!chunk || chunk.length < step) break;
-      fromIdx += step;
+      if (!chunk || chunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+      fromIdx += chunk.length;
     }
   }
 
   return await buildReportObject(logs, cleanClient, "Összes projekt", `Riport_${cleanClient}`);
+}
+
+// =====================================================================
+// 📊 ÜGYFÉL ÉVES KIMUTATÁS – havi bontás, munkaszámonként, csapatkategóriák szerint
+// Vezetőség: "Vezetőség" csoport | Account: minden account csoport (a Social kivételével)
+// Kreatív: kreatív csapatok (grafikus, copy) | Social: "Account 2 - Social" | Digi | Stúdió | Egyéb: minden más (csak ha van)
+// =====================================================================
+const CLIENT_REPORT_CATS = [
+  { key: 'vez', label: 'Vezetőség', short: 'Vez.' },
+  { key: 'acc', label: 'Account', short: 'Acc.' },
+  { key: 'kre', label: 'Kreatív', short: 'Kre.' },
+  { key: 'soc', label: 'Social', short: 'Soc.' },
+  { key: 'dig', label: 'Digi', short: 'Digi' },
+  { key: 'stu', label: 'Stúdió', short: 'Stúdió' },
+  { key: 'egy', label: 'Egyéb', short: 'Egyéb', optional: true } // csak akkor jelenik meg, ha van ilyen óra
+];
+
+function clientReportCategory(csoport) {
+  const g = pnNorm(csoport);
+  if (!g) return 'egy';
+  if (g.includes('social')) return 'soc';          // Account 2 - Social
+  if (g.startsWith('vezetoseg')) return 'vez';
+  if (g.includes('account')) return 'acc';         // Account 1, 2, 3, 4 ...
+  if (g.includes('kreativ') || g.includes('copy') || g.includes('grafik')) return 'kre';
+  if (g.includes('digi')) return 'dig';
+  if (g.includes('studio')) return 'stu';
+  return 'egy';
+}
+
+// A riportban megjelenő oszlopok: az "Egyéb" csak akkor, ha van benne óra
+function clientReportCats(r) {
+  return CLIENT_REPORT_CATS.filter(c => !c.optional || (r && r.yearTotals && r.yearTotals[c.key] > 0));
+}
+
+function emptyCatRow() {
+  const o = { total: 0 };
+  CLIENT_REPORT_CATS.forEach(c => o[c.key] = 0);
+  return o;
+}
+
+async function getClientYearlyReportFromSupabase(clientName, year, rawOnly = false) {
+  const cleanClient = clientName.trim();
+  const y = String(year || new Date().getFullYear());
+  const from = `${y}-01-01`, to = `${y}-12-31`;
+
+  const matchingJobIds = allMasterProjects
+    .filter(p => p.vevo && p.vevo.toLowerCase().includes(cleanClient.toLowerCase()))
+    .map(p => p.id);
+
+  let logs = [];
+  let fromIdx = 0;
+  const step = 1000;
+
+  while (true) {
+    let q = supabaseClient.from('work_logs').select('*').gte('datum', from).lte('datum', to);
+    if (matchingJobIds.length > 0) {
+      const formattedJobIds = matchingJobIds.map(id => `"${id}"`).join(',');
+      q = q.or(`munkaszam.in.(${formattedJobIds}),vevo.ilike.%${cleanClient}%`);
+    } else {
+      q = q.ilike('vevo', `%${cleanClient}%`);
+    }
+    const { data: chunk, error } = await q.order('id', { ascending: true }).range(fromIdx, fromIdx + step - 1);
+    if (error) throw error;
+    if (chunk && chunk.length > 0) logs.push(...chunk);
+    if (!chunk || chunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+    fromIdx += chunk.length;
+  }
+
+  if (rawOnly) return { clientName: cleanClient, year: y, logs };
+  return await buildClientCategoryReport(logs, cleanClient, y);
+}
+
+// --- Munkaszám-választó az éves kimutatáshoz ---
+// 1. lépés: Lekérés -> az ügyfél adott évi munkaszámai listában, pipálható
+// 2. lépés: "Kimutatás készítése" -> csak a kipipált munkaszámokra készül el a táblázat
+window.clientYearState = null; // { clientName, year, logs, jobs: [{job, munka, hours}] }
+
+async function loadClientYearJobPicker(clientName, year) {
+  const r = await getClientYearlyReportFromSupabase(clientName, year, true);
+  const projMap = {};
+  (allMasterProjects || []).forEach(p => { projMap[String(p.id)] = p; });
+
+  const jobs = {};
+  r.logs.forEach(l => {
+    const job = String(l.munkaszam || '–').trim();
+    if (!jobs[job]) jobs[job] = { job, munka: projMap[job]?.munka || l.munka || '', hours: 0 };
+    jobs[job].hours += parseFloat(String(l.oraszam).replace(',', '.')) || 0;
+    if (!jobs[job].munka && l.munka) jobs[job].munka = l.munka;
+  });
+
+  window.clientYearState = {
+    clientName: r.clientName,
+    year: r.year,
+    logs: r.logs,
+    jobs: Object.values(jobs).sort((a, b) => a.job.localeCompare(b.job, 'hu', { numeric: true }))
+  };
+  lastReportData = null;
+  renderClientJobPicker();
+  document.getElementById('projectHeader').innerHTML = '';
+  document.getElementById('mList').innerHTML = '';
+}
+
+function renderClientJobPicker(open) {
+  const box = document.getElementById('clientJobPicker');
+  const st = window.clientYearState;
+  if (!box || !st) return;
+
+  if (!st.jobs.length) {
+    box.innerHTML = `<div class="alert alert-warning py-2">${escapeHtml(st.clientName)}: ${escapeHtml(st.year)}-ban/ben nincs rögzített óra.</div>`;
+    return;
+  }
+
+  const prevChecked = new Set([...box.querySelectorAll('.cjp-cb:checked')].map(cb => cb.value));
+  const rows = st.jobs.map((j, i) => `
+    <tr class="cjp-row" data-search="${escapeHtml(pnNorm(j.job + ' ' + j.munka))}" onclick="if (event.target.tagName !== 'INPUT' && event.target.tagName !== 'LABEL') { const cb = this.querySelector('.cjp-cb'); cb.checked = !cb.checked; updateClientJobPickerCount(); }">
+      <td style="width:32px;">
+        <input type="checkbox" class="form-check-input cjp-cb" id="cjp-${i}" value="${escapeHtml(j.job)}" ${prevChecked.has(j.job) ? 'checked' : ''} onchange="updateClientJobPickerCount()">
+      </td>
+      <td class="text-nowrap fw-bold"><label for="cjp-${i}" class="mb-0" style="cursor:pointer;">${escapeHtml(j.job)}</label></td>
+      <td><label for="cjp-${i}" class="mb-0" style="cursor:pointer;">${escapeHtml(j.munka || 'Nincs megnevezés')}</label></td>
+      <td class="text-end text-nowrap text-muted">${fmtH(j.hours)}</td>
+    </tr>`).join('');
+
+  box.innerHTML = `
+    <div class="card border-primary-subtle shadow-sm mb-3">
+      <div class="card-header bg-light py-2 px-3 small fw-bold d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-list-check me-1"></i> ${escapeHtml(st.clientName)} – ${escapeHtml(st.year)}: válaszd ki a munkaszámokat</span>
+        <span class="text-muted fw-normal" id="cjpCount">0 / ${st.jobs.length}</span>
+      </div>
+      <div class="card-body p-2">
+        <input class="form-control form-control-sm mb-2" id="cjpFilter" placeholder="Szűrés munkaszámra vagy munkanévre..." oninput="filterClientJobPicker()">
+        <div class="border rounded bg-white" style="max-height: 340px; overflow-y: auto;">
+          <table class="table table-sm table-hover align-middle mb-0 cjp-table">
+            <thead class="table-light sticky-top" style="z-index: 2;">
+              <tr>
+                <th style="width:32px;"><input type="checkbox" class="form-check-input" id="cjpAll" title="Összes kijelölése" onchange="setClientJobPickerAll(this.checked)"></th>
+                <th>Munkaszám</th>
+                <th>Munka neve</th>
+                <th class="text-end">Óra</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <button type="button" class="btn btn-primary w-100 fw-bold mt-2" id="cjpBuildBtn" onclick="buildClientYearReportFromSelection()">
+          <i class="bi bi-table me-1"></i> Kimutatás készítése
+        </button>
+      </div>
+    </div>`;
+  updateClientJobPickerCount();
+}
+
+function filterClientJobPicker() {
+  const v = pnNorm(document.getElementById('cjpFilter')?.value || '');
+  document.querySelectorAll('#clientJobPicker .cjp-row').forEach(r => {
+    r.style.display = !v || (r.dataset.search || '').includes(v) ? '' : 'none';
+  });
+  updateClientJobPickerCount();
+}
+
+// A fejléc "összes" pipája a szűrésnek megfelelő (látható) sorokra hat
+function setClientJobPickerAll(on) {
+  document.querySelectorAll('#clientJobPicker .cjp-row').forEach(r => {
+    if (r.style.display === 'none') return;
+    const cb = r.querySelector('.cjp-cb');
+    if (cb) cb.checked = on;
+  });
+  updateClientJobPickerCount();
+}
+
+function updateClientJobPickerCount() {
+  const all = [...document.querySelectorAll('#clientJobPicker .cjp-cb')];
+  const n = all.filter(cb => cb.checked).length;
+  const badge = document.getElementById('cjpCount');
+  if (badge) badge.innerText = `${n} / ${all.length} kijelölve`;
+  const btn = document.getElementById('cjpBuildBtn');
+  if (btn) btn.disabled = n === 0;
+
+  // "Összes" pipa állapota a látható sorok alapján (részleges kijelölésnél köztes állapot)
+  const visible = [...document.querySelectorAll('#clientJobPicker .cjp-row')].filter(r => r.style.display !== 'none').map(r => r.querySelector('.cjp-cb'));
+  const vOn = visible.filter(cb => cb && cb.checked).length;
+  const allCb = document.getElementById('cjpAll');
+  if (allCb) {
+    allCb.checked = visible.length > 0 && vOn === visible.length;
+    allCb.indeterminate = vOn > 0 && vOn < visible.length;
+  }
+}
+
+async function buildClientYearReportFromSelection() {
+  const st = window.clientYearState;
+  if (!st) return;
+  const selected = new Set([...document.querySelectorAll('#clientJobPicker .cjp-cb:checked')].map(cb => cb.value));
+  if (!selected.size) return showModal("Jelölj ki legalább egy munkaszámot!", "Hiba");
+
+  const btn = document.getElementById('cjpBuildBtn');
+  if (btn) btn.disabled = true;
+  try {
+    const logs = st.logs.filter(l => selected.has(String(l.munkaszam || '–').trim()));
+    const res = await buildClientCategoryReport(logs, st.clientName, st.year);
+    res.selectedJobs = [...selected];
+    lastReportData = res;
+    renderClientReport(res);
+    document.getElementById('projectHeader')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) {
+    showModal("Hiba a kimutatás készítésekor: " + e.message, "Hiba");
+  } finally {
+    updateClientJobPickerCount();
+  }
+}
+
+
+async function buildClientCategoryReport(logs, clientName, year) {
+  const fileName = `Ugyfel_kimutatas_${clientName.replace(/[^\p{L}\p{N}]+/gu, '_')}_${year}.csv`;
+  const base = { kind: 'client', clientName, year, fileName, months: [], jobsYear: [], yearTotals: emptyCatRow() };
+  if (!logs || logs.length === 0) return base;
+
+  // Csoportok a profilokból
+  const emails = [...new Set(logs.map(l => cleanEmail(l.user_email)).filter(Boolean))];
+  const groupByEmail = {};
+  (window.pnAllProfiles || []).forEach(p => { groupByEmail[cleanEmail(p.email)] = p.csoport; });
+  const missing = emails.filter(e => !(e in groupByEmail));
+  if (missing.length > 0) {
+    const { data: profs } = await supabaseClient.from('profiles').select('email, csoport').in('email', missing);
+    (profs || []).forEach(p => { groupByEmail[cleanEmail(p.email)] = p.csoport; });
+  }
+
+  const projMap = {};
+  (allMasterProjects || []).forEach(p => { projMap[String(p.id)] = p; });
+
+  const months = {};   // 'YYYY-MM' -> { totals, jobs: { munkaszam: row } }
+  const jobsYear = {}; // munkaszam -> row
+
+  logs.forEach(log => {
+    const ymd = normalizeDateStr(log.datum);
+    const month = /^\d{4}-\d{2}/.test(ymd) ? ymd.substring(0, 7) : String(log.honap || 'Ismeretlen').replace('.', '-').substring(0, 7);
+    const job = String(log.munkaszam || '–').trim();
+    const hours = parseFloat(String(log.oraszam).replace(',', '.')) || 0;
+    const cat = clientReportCategory(groupByEmail[cleanEmail(log.user_email)]);
+    const munka = projMap[job]?.munka || log.munka || '';
+
+    if (!months[month]) months[month] = { totals: emptyCatRow(), jobs: {} };
+    const m = months[month];
+    if (!m.jobs[job]) m.jobs[job] = Object.assign(emptyCatRow(), { job, munka });
+    if (!jobsYear[job]) jobsYear[job] = Object.assign(emptyCatRow(), { job, munka });
+
+    [m.jobs[job], m.totals, jobsYear[job], base.yearTotals].forEach(row => {
+      row[cat] += hours;
+      row.total += hours;
+    });
+  });
+
+  const byJob = (a, b) => a.job.localeCompare(b.job, 'hu', { numeric: true });
+  base.months = Object.keys(months).sort().map(k => ({
+    month: k,
+    totals: months[k].totals,
+    jobs: Object.values(months[k].jobs).sort(byJob)
+  }));
+  base.jobsYear = Object.values(jobsYear).sort(byJob);
+  return base;
+}
+
+function fmtH(v) {
+  return v > 0 ? (Math.round(v * 100) / 100).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : '–';
+}
+
+function clientCatTable(rows, totalRow, totalLabel, cats) {
+  cats = cats || CLIENT_REPORT_CATS;
+  const head = `<tr>
+      <th class="text-start" style="min-width:110px;">Munkaszám</th>
+      ${cats.map(c => `<th class="text-end" title="${c.label}">${c.short}</th>`).join('')}
+      <th class="text-end">Össz.</th>
+    </tr>`;
+  const body = rows.map(r => `<tr>
+      <td class="text-start">
+        <div class="fw-bold" style="font-size:0.78rem;">${escapeHtml(r.job)}</div>
+        ${r.munka ? `<div class="text-muted text-truncate" style="font-size:0.68rem; max-width:180px;" title="${escapeHtml(r.munka)}">${escapeHtml(r.munka)}</div>` : ''}
+      </td>
+      ${cats.map(c => `<td class="text-end">${fmtH(r[c.key])}</td>`).join('')}
+      <td class="text-end fw-bold">${fmtH(r.total)}</td>
+    </tr>`).join('');
+  const foot = `<tr class="table-light fw-bold">
+      <td class="text-start">${totalLabel}</td>
+      ${cats.map(c => `<td class="text-end">${fmtH(totalRow[c.key])}</td>`).join('')}
+      <td class="text-end">${fmtH(totalRow.total)}</td>
+    </tr>`;
+  return `<div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0 client-cat-table">
+        <thead class="table-light">${head}</thead>
+        <tbody>${body}</tbody>
+        <tfoot>${foot}</tfoot>
+      </table>
+    </div>`;
+}
+
+function renderClientReport(r) {
+  const list = document.getElementById('mList');
+  const header = document.getElementById('projectHeader');
+  const monthNames = ['Január', 'Február', 'Március', 'Április', 'Május', 'Június', 'Július', 'Augusztus', 'Szeptember', 'Október', 'November', 'December'];
+
+  const t = r.yearTotals;
+  const cats = clientReportCats(r);
+  const catBadges = cats.filter(c => t[c.key] > 0)
+    .map(c => `<span class="badge bg-white text-primary border border-primary-subtle me-1 mb-1">${c.label}: ${fmtH(t[c.key])}</span>`).join('');
+
+  header.innerHTML = `
+    <div class="alert alert-primary p-3 mb-3 shadow-sm">
+      <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
+        <div>
+          <strong class="fs-5">${escapeHtml(r.clientName)} – ${escapeHtml(r.year)}. évi kimutatás</strong>
+          <div class="mt-1"><span class="badge bg-primary fs-6">Összesen: ${fmtH(t.total)} óra</span></div>
+        </div>
+        <div class="mt-2 mt-md-0 d-flex flex-column gap-1">
+          <button class="btn btn-success btn-sm fw-bold w-100 w-md-auto" style="white-space: nowrap !important;" onclick="downloadReportXlsx()">
+            <i class="bi bi-file-earmark-excel me-1"></i> Letöltés (Excel)
+          </button>
+          <button class="btn btn-link btn-sm text-success p-0" style="white-space: nowrap !important; font-size: 0.75rem;" onclick="downloadReport()">
+            vagy CSV
+          </button>
+        </div>
+      </div>
+      ${r.months.length ? `
+      <div class="mt-2">${catBadges}</div>
+      <div class="border-top border-primary-subtle pt-2 mt-2">
+        <small class="text-muted fw-bold text-uppercase d-block mb-1" style="font-size: 0.68rem; letter-spacing: 0.5px;">
+          <i class="bi bi-briefcase-fill me-1"></i> Éves összesítő munkaszámonként (${r.jobsYear.length} munkaszám)
+        </small>
+        <div class="bg-white rounded border border-primary-subtle shadow-sm p-1" style="max-height: 300px; overflow-y: auto;">
+          ${clientCatTable(r.jobsYear, t, 'Év összesen', cats)}
+        </div>
+      </div>` : ''}
+    </div>`;
+
+  if (!r.months.length) {
+    list.innerHTML = `<div class="alert alert-warning py-2">A kijelölt munkaszámokra ${escapeHtml(r.year)}-ban/ben nincs rögzített óra.</div>`;
+    return;
+  }
+
+  list.innerHTML = r.months.map(m => {
+    const [yy, mm] = m.month.split('-').map(Number);
+    const label = mm ? `${yy}. ${monthNames[mm - 1]}` : m.month;
+    return `
+      <div class="card mb-3 shadow-sm border-0">
+        <div class="card-header bg-light py-2 px-3 d-flex justify-content-between align-items-center">
+          <span class="small fw-bold"><i class="bi bi-calendar3 me-2"></i>${label}</span>
+          <span class="badge bg-primary">${fmtH(m.totals.total)} óra</span>
+        </div>
+        <div class="card-body p-2">${clientCatTable(m.jobs, m.totals, 'Hónap összesen', cats)}</div>
+      </div>`;
+  }).join('');
+}
+
+function clientReportCsvRows(r) {
+  const cats = clientReportCats(r);
+  const num = v => Math.round(v * 100) / 100;
+  const rows = [];
+  r.months.forEach(m => {
+    m.jobs.forEach(j => rows.push([m.month, j.job, j.munka, ...cats.map(c => num(j[c.key])), num(j.total)]));
+    rows.push([m.month, 'Hónap összesen', '', ...cats.map(c => num(m.totals[c.key])), num(m.totals.total)]);
+  });
+  r.jobsYear.forEach(j => rows.push([`${r.year} összesen`, j.job, j.munka, ...cats.map(c => num(j[c.key])), num(j.total)]));
+  rows.push([`${r.year} összesen`, 'Év összesen', '', ...cats.map(c => num(r.yearTotals[c.key])), num(r.yearTotals.total)]);
+  return {
+    header: ['Hónap', 'Munkaszám', 'Munka', ...cats.map(c => `${c.label} óra`), 'Összesen'],
+    rows
+  };
+}
+
+// =====================================================================
+// 📗 FORMÁZOTT EXCEL (.xlsx) LETÖLTÉS – külső könyvtár nélkül
+// Kis XLSX-író: tömörítetlen ZIP + SpreadsheetML, stílusokkal
+// =====================================================================
+const XLSX_STYLE = { normal: 0, title: 1, subtitle: 2, header: 3, text: 4, num: 5, job: 6, totalText: 7, totalNum: 8, monthText: 9, grandText: 10, grandNum: 11 };
+
+function xlsxEsc(v) {
+  return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+}
+
+function xlsxColName(i) { // 0 -> A
+  let s = '';
+  i++;
+  while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); }
+  return s;
+}
+
+// sheet: { name, cols: [szélesség], rows: [{ cells: [{v, s}], height? }], merges: ['A1:I1'], freezeRow: n }
+function xlsxSheetXml(sheet) {
+  const cols = `<cols>${sheet.cols.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>`;
+  const rows = sheet.rows.map((row, ri) => {
+    const r = ri + 1;
+    const cells = (row.cells || []).map((c, ci) => {
+      if (c === null || c === undefined) return '';
+      const ref = `${xlsxColName(ci)}${r}`;
+      const s = c.s || 0;
+      if (c.v === null || c.v === undefined || c.v === '') return `<c r="${ref}" s="${s}"/>`;
+      if (typeof c.v === 'number' && isFinite(c.v)) return `<c r="${ref}" s="${s}"><v>${Math.round(c.v * 100) / 100}</v></c>`;
+      return `<c r="${ref}" s="${s}" t="inlineStr"><is><t xml:space="preserve">${xlsxEsc(c.v)}</t></is></c>`;
+    }).join('');
+    return `<row r="${r}"${row.height ? ` ht="${row.height}" customHeight="1"` : ''}>${cells}</row>`;
+  }).join('');
+  const pane = sheet.freezeRow
+    ? `<sheetViews><sheetView workbookViewId="0"><pane ySplit="${sheet.freezeRow}" topLeftCell="A${sheet.freezeRow + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>`
+    : '<sheetViews><sheetView workbookViewId="0"/></sheetViews>';
+  const merges = sheet.merges && sheet.merges.length
+    ? `<mergeCells count="${sheet.merges.length}">${sheet.merges.map(m => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>` : '';
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>${pane}<sheetFormatPr defaultRowHeight="15"/>${cols}<sheetData>${rows}</sheetData>${merges}<pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/><pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>`;
+}
+
+function xlsxStylesXml() {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.00;-#,##0.00;&quot;–&quot;"/></numFmts>
+<fonts count="6">
+  <font><sz val="10"/><name val="Arial"/></font>
+  <font><b/><sz val="14"/><color rgb="FF0F172A"/><name val="Arial"/></font>
+  <font><sz val="9"/><color rgb="FF64748B"/><name val="Arial"/></font>
+  <font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="Arial"/></font>
+  <font><b/><sz val="10"/><name val="Arial"/></font>
+  <font><b/><sz val="10"/><color rgb="FF1E3A8A"/><name val="Arial"/></font>
+</fonts>
+<fills count="6">
+  <fill><patternFill patternType="none"/></fill>
+  <fill><patternFill patternType="gray125"/></fill>
+  <fill><patternFill patternType="solid"><fgColor rgb="FF1E40AF"/><bgColor indexed="64"/></patternFill></fill>
+  <fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill>
+  <fill><patternFill patternType="solid"><fgColor rgb="FFDBEAFE"/><bgColor indexed="64"/></patternFill></fill>
+  <fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill>
+</fills>
+<borders count="3">
+  <border><left/><right/><top/><bottom/><diagonal/></border>
+  <border><left style="thin"><color rgb="FFE2E8F0"/></left><right style="thin"><color rgb="FFE2E8F0"/></right><top style="thin"><color rgb="FFE2E8F0"/></top><bottom style="thin"><color rgb="FFE2E8F0"/></bottom><diagonal/></border>
+  <border><left style="thin"><color rgb="FF94A3B8"/></left><right style="thin"><color rgb="FF94A3B8"/></right><top style="medium"><color rgb="FF1E40AF"/></top><bottom style="medium"><color rgb="FF1E40AF"/></bottom><diagonal/></border>
+</borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="12">
+  <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+  <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+  <xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+  <xf numFmtId="0" fontId="3" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+  <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
+  <xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>
+  <xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
+  <xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
+  <xf numFmtId="164" fontId="4" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>
+  <xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
+  <xf numFmtId="0" fontId="5" fillId="4" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
+  <xf numFmtId="164" fontId="5" fillId="4" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>
+</cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
+}
+
+function xlsxWorkbookFiles(sheets) {
+  const files = {};
+  files['[Content_Types].xml'] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>`;
+  files['_rels/.rels'] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
+  files['xl/workbook.xml'] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s, i) => `<sheet name="${xlsxEsc(String(s.name).replace(/[\\\/\?\*\[\]:]/g, ' ').substring(0, 31))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets></workbook>`;
+  files['xl/_rels/workbook.xml.rels'] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
+  files['xl/styles.xml'] = xlsxStylesXml();
+  sheets.forEach((s, i) => { files[`xl/worksheets/sheet${i + 1}.xml`] = xlsxSheetXml(s); });
+  return files;
+}
+
+// Tömörítetlen ZIP (STORE) – az Excel és a LibreOffice is gond nélkül megnyitja
+const XLSX_CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+function xlsxCrc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = XLSX_CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function xlsxZip(files) {
+  const enc = new TextEncoder();
+  const parts = [], central = [];
+  let offset = 0;
+  const u16 = n => [n & 0xFF, (n >>> 8) & 0xFF];
+  const u32 = n => [n & 0xFF, (n >>> 8) & 0xFF, (n >>> 16) & 0xFF, (n >>> 24) & 0xFF];
+  Object.keys(files).forEach(name => {
+    const nameB = enc.encode(name), data = enc.encode(files[name]), crc = xlsxCrc32(data);
+    const local = new Uint8Array([...u32(0x04034b50), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x21),
+      ...u32(crc), ...u32(data.length), ...u32(data.length), ...u16(nameB.length), ...u16(0)]);
+    parts.push(local, nameB, data);
+    central.push(new Uint8Array([...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x21),
+      ...u32(crc), ...u32(data.length), ...u32(data.length), ...u16(nameB.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0),
+      ...u32(0), ...u32(offset)]), nameB);
+    offset += local.length + nameB.length + data.length;
+  });
+  const cdSize = central.reduce((a, b) => a + b.length, 0);
+  const count = Object.keys(files).length;
+  const end = new Uint8Array([...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(count), ...u16(count), ...u32(cdSize), ...u32(offset), ...u16(0)]);
+  return new Blob([...parts, ...central, end], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+// Ügyfél éves kimutatás -> két munkalap: Havi bontás, Éves összesítő
+function buildClientReportSheets(r) {
+  const cats = clientReportCats(r);
+  const S = XLSX_STYLE;
+  const monthNames = ['január', 'február', 'március', 'április', 'május', 'június', 'július', 'augusztus', 'szeptember', 'október', 'november', 'december'];
+  const catLabels = cats.map(c => `${c.label}\nóra`);
+  const nCols = 3 + cats.length + 1;
+  const lastCol = xlsxColName(nCols - 1);
+  const today = getLocalYMD().replace(/-/g, '.') + '.';
+  const sub = `Készült: ${today}  ·  Kijelölt munkaszámok: ${(r.selectedJobs || r.jobsYear.map(j => j.job)).length} db`;
+  const numCells = (row, style) => [...cats.map(c => ({ v: row[c.key], s: style })), { v: row.total, s: style }];
+
+  // 1. Havi bontás
+  const monthly = { name: 'Havi bontás', cols: [16, 12, 44, ...cats.map(() => 12), 13], rows: [], merges: [`A1:${lastCol}1`, `A2:${lastCol}2`], freezeRow: 4 };
+  monthly.rows.push({ cells: [{ v: `${r.clientName} – ${r.year}. évi kimutatás`, s: S.title }], height: 24 });
+  monthly.rows.push({ cells: [{ v: sub, s: S.subtitle }] });
+  monthly.rows.push({ cells: [] });
+  monthly.rows.push({ cells: ['Hónap', 'Munkaszám', 'Munka', ...catLabels, 'Összesen\nóra'].map(v => ({ v, s: S.header })), height: 30 });
+  r.months.forEach(m => {
+    const [yy, mm] = m.month.split('-').map(Number);
+    const label = mm ? `${yy}. ${monthNames[mm - 1]}` : m.month;
+    m.jobs.forEach((j, i) => {
+      monthly.rows.push({ cells: [{ v: i === 0 ? label : '', s: S.monthText }, { v: j.job, s: S.job }, { v: j.munka, s: S.text }, ...numCells(j, S.num)] });
+    });
+    monthly.rows.push({ cells: [{ v: '', s: S.totalText }, { v: `${label} összesen`, s: S.totalText }, { v: '', s: S.totalText }, ...numCells(m.totals, S.totalNum)] });
+  });
+  monthly.rows.push({ cells: [] });
+  monthly.rows.push({ cells: [{ v: `${r.year}. év összesen`, s: S.grandText }, { v: '', s: S.grandText }, { v: '', s: S.grandText }, ...numCells(r.yearTotals, S.grandNum)], height: 20 });
+
+  // 2. Éves összesítő munkaszámonként
+  const yearly = { name: 'Éves összesítő', cols: [12, 50, ...cats.map(() => 12), 13], rows: [], merges: [], freezeRow: 4 };
+  const lastCol2 = xlsxColName(2 + cats.length);
+  yearly.merges.push(`A1:${lastCol2}1`, `A2:${lastCol2}2`);
+  yearly.rows.push({ cells: [{ v: `${r.clientName} – ${r.year}. évi összesítő munkaszámonként`, s: S.title }], height: 24 });
+  yearly.rows.push({ cells: [{ v: sub, s: S.subtitle }] });
+  yearly.rows.push({ cells: [] });
+  yearly.rows.push({ cells: ['Munkaszám', 'Munka', ...catLabels, 'Összesen\nóra'].map(v => ({ v, s: S.header })), height: 30 });
+  r.jobsYear.forEach(j => yearly.rows.push({ cells: [{ v: j.job, s: S.job }, { v: j.munka, s: S.text }, ...numCells(j, S.num)] }));
+  yearly.rows.push({ cells: [{ v: 'Összesen', s: S.grandText }, { v: '', s: S.grandText }, ...numCells(r.yearTotals, S.grandNum)], height: 20 });
+
+  return [monthly, yearly];
+}
+
+// Időszak szövegesen, pl. "2026.11.01. – 2026.12.01."
+function formatReportPeriod(r) {
+  const f = d => d ? d.replace(/-/g, '.') + '.' : '';
+  if (r.periodFrom && r.periodTo) return `${f(r.periodFrom)} – ${f(r.periodTo)}`;
+  if (r.periodFrom) return `${f(r.periodFrom)} – mai napig`;
+  if (r.periodTo) return `kezdettől – ${f(r.periodTo)}`;
+  return '';
+}
+
+// Munkaszám és korábbi Ügyfél riport -> két munkalap: Havi bontás, Munkatársak
+function buildStandardReportSheets(r) {
+  const S = XLSX_STYLE;
+  const workerFilter = (document.getElementById('qWorker')?.value || '').toLowerCase().trim();
+  const isJob = !!r.jobId;
+  const title = isJob
+    ? `${r.jobId} – ${r.clientName || ''}${r.projectName ? ' – ' + r.projectName : ''}`
+    : `${r.clientName || ''} – összes projekt`;
+  const today = getLocalYMD().replace(/-/g, '.') + '.';
+  const sub = `Készült: ${today}` + ((r.periodFrom || r.periodTo) ? `  ·  Időszak: ${formatReportPeriod(r)}` : '') + (workerFilter ? `  ·  Szűrés: „${workerFilter}”` : '');
+  const keep = name => !workerFilter || String(name || '').toLowerCase().includes(workerFilter);
+
+  // 1. Havi bontás (hónap -> csapat -> munkatárs)
+  const monthly = { name: 'Havi bontás', cols: [14, 22, 28, 30, 13], rows: [], merges: ['A1:E1', 'A2:E2'], freezeRow: 4 };
+  monthly.rows.push({ cells: [{ v: title, s: S.title }], height: 24 });
+  monthly.rows.push({ cells: [{ v: sub, s: S.subtitle }] });
+  monthly.rows.push({ cells: [] });
+  monthly.rows.push({ cells: ['Hónap', 'Csapat', 'Munkatárs', 'Pozíció', 'Óraszám'].map(v => ({ v, s: S.header })), height: 22 });
+  let grand = 0;
+  (r.monthlyBreakdown || []).forEach(m => {
+    let monthTotal = 0, firstInMonth = true, any = false;
+    (m.teamsList || []).forEach(t => {
+      const workers = (t.workerList || []).filter(w => keep(w.name));
+      workers.forEach((w, i) => {
+        const h = Number(w.hours) || 0;
+        monthTotal += h;
+        any = true;
+        monthly.rows.push({ cells: [
+          { v: firstInMonth ? m.month : '', s: S.monthText },
+          { v: i === 0 ? (t.teamName || 'Egyéb') : '', s: i === 0 ? S.job : S.text },
+          { v: w.name, s: S.text },
+          { v: w.pos || '', s: S.text },
+          { v: h, s: S.num }
+        ] });
+        firstInMonth = false;
+      });
+    });
+    if (any) {
+      monthly.rows.push({ cells: [{ v: '', s: S.totalText }, { v: `${m.month} összesen`, s: S.totalText }, { v: '', s: S.totalText }, { v: '', s: S.totalText }, { v: monthTotal, s: S.totalNum }] });
+      grand += monthTotal;
+    }
+  });
+  monthly.rows.push({ cells: [] });
+  monthly.rows.push({ cells: [{ v: 'Mindösszesen', s: S.grandText }, { v: '', s: S.grandText }, { v: '', s: S.grandText }, { v: '', s: S.grandText }, { v: grand, s: S.grandNum }], height: 20 });
+
+  // 2. Munkatársak összórái a teljes időszakban
+  const workers = { name: 'Munkatársak', cols: [30, 32, 13], rows: [], merges: ['A1:C1', 'A2:C2'], freezeRow: 4 };
+  workers.rows.push({ cells: [{ v: `${title} – munkatársak összórái`, s: S.title }], height: 24 });
+  workers.rows.push({ cells: [{ v: sub, s: S.subtitle }] });
+  workers.rows.push({ cells: [] });
+  workers.rows.push({ cells: ['Munkatárs', 'Pozíció', 'Óraszám'].map(v => ({ v, s: S.header })), height: 22 });
+  const wt = r.workerGrandTotals || {};
+  let wSum = 0;
+  Object.keys(wt).filter(keep)
+    .map(n => ({ n, pos: typeof wt[n] === 'object' ? wt[n].pos : '', h: Number(typeof wt[n] === 'object' ? wt[n].hours : wt[n]) || 0 }))
+    .sort((a, b) => b.h - a.h)
+    .forEach(w => { wSum += w.h; workers.rows.push({ cells: [{ v: w.n, s: S.job }, { v: w.pos || '', s: S.text }, { v: w.h, s: S.num }] }); });
+  workers.rows.push({ cells: [{ v: 'Összesen', s: S.grandText }, { v: '', s: S.grandText }, { v: wSum, s: S.grandNum }], height: 20 });
+
+  return [monthly, workers];
+}
+
+// Minden statisztika-riport formázott Excel-letöltése
+function downloadReportXlsx() {
+  const r = lastReportData;
+  const isClientRep = r && r.kind === 'client';
+  if (!r || (isClientRep && !r.months.length) || (!isClientRep && !(r.monthlyBreakdown || []).length)) return showModal("Nincs letölthető adat!", "Hiba");
+  try {
+    const sheets = isClientRep ? buildClientReportSheets(r) : buildStandardReportSheets(r);
+    const blob = xlsxZip(xlsxWorkbookFiles(sheets));
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = (r.fileName || 'Spice_Riport.csv').replace(/\.csv$/i, '.xlsx');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+  } catch (err) {
+    showModal("Hiba az Excel-fájl készítésekor: " + err.message, "Hiba");
+  }
+}
+
+function populateStatYearSelect() {
+  const sel = document.getElementById('qYear');
+  if (!sel || sel.options.length) return;
+  const cy = new Date().getFullYear();
+  for (let y = cy; y >= cy - 5; y--) sel.add(new Option(String(y), String(y)));
+  sel.value = String(cy);
 }
 
   async function buildReportObject(logs, clientName, projectName, fileNameBase) {
@@ -2557,7 +3262,7 @@ async function getClientYearlyReportFromSupabase(clientName) {
     li.innerHTML = '';
     let filtered = [];
 
-    if (t === 'client') {
+    if (t === 'client' || t === 'clientyear') {
       filtered = allClients.filter(c => c.toLowerCase().includes(v)).slice(0, 15);
       if (filtered.length > 0) {
         li.innerHTML = filtered.map(c => `
@@ -2662,11 +3367,16 @@ async function getClientYearlyReportFromSupabase(clientName) {
         <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
           <div>
             <strong class="fs-5">${clientName}${projectName}</strong>
-            <div class="mt-1"><span class="badge bg-primary fs-6">Összesen: ${totalHrs} óra</span></div>
+            <div class="mt-1"><span class="badge bg-primary fs-6">Összesen: ${totalHrs} óra</span>
+              ${(r.periodFrom || r.periodTo) ? `<span class="badge bg-warning text-dark ms-1" style="font-size:0.8rem;"><i class="bi bi-calendar-range me-1"></i>${escapeHtml(formatReportPeriod(r))}</span>` : ''}
+            </div>
           </div>
-          <div class="mt-2 mt-md-0">
-            <button class="btn btn-success btn-sm fw-bold w-100 w-md-auto" style="white-space: nowrap !important;" onclick="downloadReport()">
-              <i class="bi bi-file-earmark-csv me-1"></i> Letöltés (CSV)
+          <div class="mt-2 mt-md-0 d-flex flex-column gap-1">
+            <button class="btn btn-success btn-sm fw-bold w-100 w-md-auto" style="white-space: nowrap !important;" onclick="downloadReportXlsx()">
+              <i class="bi bi-file-earmark-excel me-1"></i> Letöltés (Excel)
+            </button>
+            <button class="btn btn-link btn-sm text-success p-0" style="white-space: nowrap !important; font-size: 0.75rem;" onclick="downloadReport()">
+              vagy CSV
             </button>
           </div>
         </div>
@@ -2734,13 +3444,15 @@ async function getClientYearlyReportFromSupabase(clientName) {
 }
 
   async function downloadReport() {
-    if (!lastReportData || !lastReportData.csvData) return showModal("Nincs letölthető adat!", "Hiba");
+    const isClientRep = lastReportData && lastReportData.kind === 'client';
+    if (!lastReportData || (!isClientRep && !lastReportData.csvData) || (isClientRep && !lastReportData.months.length)) return showModal("Nincs letölthető adat!", "Hiba");
 
     try {
-      const header = ["Hónap", "Ügyfél", "Projekt", "Csapat", "Név", "Pozíció", "Óraszám"];
+      const clientCsv = isClientRep ? clientReportCsvRows(lastReportData) : null;
+      const header = isClientRep ? clientCsv.header : ["Hónap", "Ügyfél", "Projekt", "Csapat", "Név", "Pozíció", "Óraszám"];
       let csvContent = "\uFEFF" + header.join(";") + "\r\n";
       
-      lastReportData.csvData.forEach(function(row) {
+      (isClientRep ? clientCsv.rows : lastReportData.csvData).forEach(function(row) {
         let rowEscaped = row.map(v => {
           let value = (typeof v === 'number') ? String(v).replace('.', ',') : v;
           return '"' + String(value).replace(/"/g, '""') + '"';
@@ -3232,12 +3944,12 @@ async function getClientYearlyReportFromSupabase(clientName) {
         .select('*')
         .gte('datum', startDateStr)
         .lte('datum', endDateStr)
-        .range(logFrom, logFrom + step - 1);
+        .order('id', { ascending: true }).range(logFrom, logFrom + step - 1);
 
       if (error) throw error;
       if (chunk && chunk.length > 0) allLogs.push(...chunk);
-      if (!chunk || chunk.length < step) break; 
-      logFrom += step;
+      if (!chunk || chunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+      logFrom += chunk.length;
     }
 
     let allLeaves = [], leaveFrom = 0;
@@ -3247,12 +3959,12 @@ async function getClientYearlyReportFromSupabase(clientName) {
         .select('*')
         .or(`veg_datum.gte.${startDateStr},and(veg_datum.is.null,kezdo_datum.gte.${startDateStr})`)
         .lte('kezdo_datum', endDateStr)
-        .range(leaveFrom, leaveFrom + step - 1);
+        .order('id', { ascending: true }).range(leaveFrom, leaveFrom + step - 1);
 
       if (error) throw error;
       if (chunk && chunk.length > 0) allLeaves.push(...chunk);
-      if (!chunk || chunk.length < step) break;
-      leaveFrom += step;
+      if (!chunk || chunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+      leaveFrom += chunk.length;
     }
 
     // 🎯 ITT KISZŰRJÜK A HOME OFFICE (HO) ÉS AZ ÜGYFÉL (Ü) JELÖLÉSEKET IS
@@ -3648,12 +4360,12 @@ async function checkMissingRecords(evt) {
           .select('*')
           .gte('datum', startDateStr)
           .lte('datum', endDateStr)
-          .range(logFrom, logFrom + step - 1);
+          .order('id', { ascending: true }).range(logFrom, logFrom + step - 1);
         
         if (logErr) throw logErr;
         if (chunk && chunk.length > 0) allLogs.push(...chunk);
-        if (!chunk || chunk.length < step) break;
-        logFrom += step;
+        if (!chunk || chunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+        logFrom += chunk.length;
       }
 
       let allLeaves = [], leaveFrom = 0;
@@ -3661,12 +4373,12 @@ async function checkMissingRecords(evt) {
         const { data: chunk, error: leaveErr } = await supabaseClient
           .from('leave_requests')
           .select('*')
-          .range(leaveFrom, leaveFrom + step - 1);
+          .order('id', { ascending: true }).range(leaveFrom, leaveFrom + step - 1);
         
         if (leaveErr) throw leaveErr;
         if (chunk && chunk.length > 0) allLeaves.push(...chunk);
-        if (!chunk || chunk.length < step) break;
-        leaveFrom += step;
+        if (!chunk || chunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+        leaveFrom += chunk.length;
       }
 
       // 🎯 ITT SZŰRJÜK KI AZ ÜGYFÉL (Ü) ÉS HOME OFFICE (HO) JELÖLÉSEKET
@@ -3946,8 +4658,20 @@ async function checkMissingRecords(evt) {
 
       // 3 lekérdezés összesen, akárhány hónapot és napot vizsgálunk
       const [logRes, reqRes, leaveRes] = await Promise.all([
-        supabaseClient.from('work_logs').select('datum, oraszam, munkaszam, vevo, munka')
-          .ilike('user_email', email).gte('datum', startDateStr).lte('datum', endDateStr).range(0, 9999),
+        (async () => {
+          // Lapozott lekérés: az 1000 soros Supabase-korlát felett is minden rögzítés megjön
+          const all = [];
+          for (let from = 0; ; ) {
+            const { data, error } = await supabaseClient.from('work_logs').select('id, datum, oraszam, munkaszam, vevo, munka')
+              .ilike('user_email', email).gte('datum', startDateStr).lte('datum', endDateStr)
+              .order('id', { ascending: true }).range(from, from + 999);
+            if (error) return { data: null, error };
+            if (!data || data.length === 0) break;
+            all.push(...data);
+            from += data.length;
+          }
+          return { data: all, error: null };
+        })(),
         supabaseClient.from('requests').select('datum, status, expires_at').ilike('user_email', email),
         supabaseClient.from('leave_requests').select('*').ilike('user_email', email)
           .lte('kezdo_datum', endDateStr).or(`veg_datum.gte.${startDateStr},veg_datum.is.null`)
@@ -4921,12 +5645,12 @@ async function exportRequestsToCsv() {
         .select('*')
         .gte('datum', startDateStr)
         .lte('datum', endDateStr)
-        .range(fromIdx, fromIdx + step - 1);
+        .order('id', { ascending: true }).range(fromIdx, fromIdx + step - 1);
 
       if (error) throw error;
       if (chunk && chunk.length > 0) allLogs.push(...chunk);
-      if (!chunk || chunk.length < step) break;
-      fromIdx += step;
+      if (!chunk || chunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+      fromIdx += chunk.length;
     }
 
     if (allLogs.length === 0) return showModal("Nincs exportálható adat a választott hónapra.", "Információ");
@@ -4938,12 +5662,12 @@ async function exportRequestsToCsv() {
       const { data: pChunk, error: pErr } = await supabaseClient
         .from('projects')
         .select('*')
-        .range(pFrom, pFrom + step - 1);
+        .order('munkaszam', { ascending: true }).range(pFrom, pFrom + step - 1);
 
       if (pErr) break;
       if (pChunk && pChunk.length > 0) projData.push(...pChunk);
-      if (!pChunk || pChunk.length < step) break;
-      pFrom += step;
+      if (!pChunk || pChunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+      pFrom += pChunk.length;
     }
 
     // Projekt törzsadat mappa építése
@@ -5886,12 +6610,12 @@ async function onTsCreGroupChange() {
       const { data: pChunk, error: pErr } = await supabaseClient
         .from('projects')
         .select('*')
-        .range(pFrom, pFrom + step - 1);
+        .order('munkaszam', { ascending: true }).range(pFrom, pFrom + step - 1);
 
       if (pErr) break;
       if (pChunk && pChunk.length > 0) allProjData.push(...pChunk);
-      if (!pChunk || pChunk.length < step) break;
-      pFrom += step;
+      if (!pChunk || pChunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+      pFrom += pChunk.length;
     }
 
     window.allProjectsForStats = (allProjData || []).map(p => ({
@@ -5993,12 +6717,12 @@ async function onTsCreGroupChange() {
           .from('work_logs')
           .select('*')
           .or(searchTerms.join(','))
-          .range(logFrom, logFrom + step - 1);
+          .order('id', { ascending: true }).range(logFrom, logFrom + step - 1);
 
         if (error) break;
         if (chunk && chunk.length > 0) userLogsRaw.push(...chunk);
-        if (!chunk || chunk.length < step) break;
-        logFrom += step;
+        if (!chunk || chunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+        logFrom += chunk.length;
       }
     }
 
@@ -6016,12 +6740,12 @@ async function onTsCreGroupChange() {
           .from('leave_requests')
           .select('*')
           .or(leaveTerms.join(','))
-          .range(leaveFrom, leaveFrom + step - 1);
+          .order('id', { ascending: true }).range(leaveFrom, leaveFrom + step - 1);
 
         if (error) break;
         if (chunk && chunk.length > 0) userLeavesRaw.push(...chunk);
-        if (!chunk || chunk.length < step) break;
-        leaveFrom += step;
+        if (!chunk || chunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+        leaveFrom += chunk.length;
       }
     }
 
@@ -6244,12 +6968,12 @@ async function loadTsCreativeData() {
         const { data: pChunk, error: pErr } = await supabaseClient
           .from('projects')
           .select('*')
-          .range(pFrom, pFrom + step - 1);
+          .order('munkaszam', { ascending: true }).range(pFrom, pFrom + step - 1);
 
         if (pErr) break;
         if (pChunk && pChunk.length > 0) allProjData.push(...pChunk);
-        if (!pChunk || pChunk.length < step) break;
-        pFrom += step;
+        if (!pChunk || pChunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+        pFrom += pChunk.length;
       }
 
       window.allProjectsForStats = (allProjData || []).map(p => ({
@@ -6307,12 +7031,12 @@ async function loadTsCreativeData() {
         .select('*')
         .gte('datum', startDateStr)
         .lte('datum', endDateStr)
-        .range(logFrom, logFrom + step - 1);
+        .order('id', { ascending: true }).range(logFrom, logFrom + step - 1);
 
       if (error) break;
       if (chunk && chunk.length > 0) allLogs.push(...chunk);
-      if (!chunk || chunk.length < step) break;
-      logFrom += step;
+      if (!chunk || chunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+      logFrom += chunk.length;
     }
 
     if (allLogs.length === 0) {
@@ -6322,12 +7046,12 @@ async function loadTsCreativeData() {
           .from('work_logs')
           .select('*')
           .or(`honap.eq.${month},honap.eq.${mDot}`)
-          .range(logFrom, logFrom + step - 1);
+          .order('id', { ascending: true }).range(logFrom, logFrom + step - 1);
 
         if (error) break;
         if (chunk && chunk.length > 0) allLogs.push(...chunk);
-        if (!chunk || chunk.length < step) break;
-        logFrom += step;
+        if (!chunk || chunk.length === 0) break; // csak üres lapnál állunk meg (a szerver korlátja is lehet kisebb)
+        logFrom += chunk.length;
       }
     }
 
