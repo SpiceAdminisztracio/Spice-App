@@ -1115,7 +1115,7 @@
               <option value="Betegszabadság">Betegszabadság (azonnali)</option>
               <option value="Home office">Home office (keret szerint, azonnali)</option>
               <option value="Rendkívüli HO">Rendkívüli HO (betegség, félévente max. 3 nap)</option>
-              <option value="Egyedi HO">Egyedi HO (15 nappal előre, felettes + HR)</option>
+              <option value="Egyedi HO">Egyedi HO (lehetőleg 15 nappal előre, felettes + HR)</option>
               <option value="Apa szabadság">Apa szabadság (azonnali)</option>
               <option value="Tavalyi szabadság">Tavalyi szabadság</option>
               <option value="Kegyeleti szabadság">Kegyeleti szabadság</option>
@@ -3908,12 +3908,13 @@ function hoDaysUntil(startStr) {
   return Math.round((s - today) / (1000 * 60 * 60 * 24));
 }
 
-// Egyedi HO: legalább 15 nappal előre
+// Egyedi HO: alapesetben legalább 15 nappal előre; 15 napon belül is beküldhető,
+// ilyenkor rendkívüli kérelemként megy a jóváhagyókhoz (indoklás kötelező)
 function checkEgyediHOConditions(startStr, endStr, profile) {
   if (!hoWorkdaysBetween(startStr, endStr, profile?.email).length) return { ok: false, reason: 'A választott időszakban nincs munkanapod.' };
   const diff = hoDaysUntil(startStr);
   if (diff < HO_EGYEDI_ADVANCE_DAYS) {
-    return { ok: false, reason: `Egyedi HO-t legalább ${HO_EGYEDI_ADVANCE_DAYS} nappal korábban kell kérvényezni (a választott kezdőnap ${Math.max(diff, 0)} nap múlva van).` };
+    return { ok: true, late: true, reason: `Rendkívüli Egyedi HO: a kezdőnap ${Math.max(diff, 0)} nap múlva van (${HO_EGYEDI_ADVANCE_DAYS} napon belül). Beküldhető, de az indoklásból derüljön ki, miért sürgős. Jóváhagyás: felettes, majd HR vezető.` };
   }
   return { ok: true, reason: '' };
 }
@@ -3984,12 +3985,13 @@ function updateHORuleInfo() {
     const s = calcSickHOUsage(userRequestsCache, currentUserProfile, start || null);
     text = `Betegség esetén, félévente összesen max. ${HO_SICK_MAX_PER_HALFYEAR} nap (${hoHalfYearLabel(s.key)}: még ${s.remaining} nap). A közvetlen felettes hagyja jóvá. Indoklás kötelező.`;
   } else {
-    text = `Legalább ${HO_EGYEDI_ADVANCE_DAYS} nappal előre kérvényezhető. Jóváhagyás: először a felettes, majd a HR vezető. Indoklás kötelező.`;
+    text = `Lehetőleg legalább ${HO_EGYEDI_ADVANCE_DAYS} nappal előre kérvényezd (ennél később rendkívüli kérelemként megy). Jóváhagyás: először a felettes, majd a HR vezető. Indoklás kötelező.`;
   }
 
   if (start && currentUserProfile) {
     const check = checkHORequest(tipus, start, end, userRequestsCache, currentUserProfile);
     if (!check.ok) { text = check.reason; cls = 'alert-danger'; }
+    else if (check.late) { text = check.reason; cls = 'alert-warning'; }
   }
 
   info.className = `alert ${cls} small py-2 mt-2`;
@@ -4055,6 +4057,8 @@ async function handleFormSubmit(e) {
       if (btn) btn.disabled = false;
       return;
     }
+    // 15 napon belüli Egyedi HO: rendkívüli kérelemként jelöljük, hogy a jóváhagyók lássák
+    if (hoKind === 'egyedi' && hoCheck.late) rendkivuli = megjegyzes;
   }
 
   // 3. ÓRÁK SZÁMÍTÁSA ÉS CSÚSZTATÁS MÍNUSZOS EGYENLEG ELLENŐRZÉSE
@@ -7957,12 +7961,6 @@ async function submitChallenge() {
 
     if (!submitBtn) return;
     updateHORuleInfo();
-
-    // Egyedi HO csak legalább 15 nappal előre kérhető
-    if (getHOKind(tipus) === 'egyedi' && kezdoDatum && hoDaysUntil(kezdoDatum) < HO_EGYEDI_ADVANCE_DAYS) {
-      submitBtn.disabled = true;
-      return;
-    }
 
     if (!tipus || !kezdoDatum) {
       submitBtn.disabled = true;
