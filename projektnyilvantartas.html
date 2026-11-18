@@ -2030,16 +2030,15 @@
           const isRejected = ['rejected', 'elutasitva', 'cancelled', 'visszavont'].includes(st);
           if (isRejected) return false;
 
-          // 1. Vizsgálat: szerepel-e a megnyitott nap az indoklásban megjelölt érintett napok közt?
-          const comment = String(p.megjegyzes || p.indoklas || '');
-          if (comment.includes(normalizedDv)) return true;
+          // Ugyanaz a szabály, mint az adatbázis trg_check_work_log_payout_lock triggerében:
+          // csak a kifizetés megjegyzésében "[Érintett napok: ...]" listában szereplő nap zárolt.
+          // A kifizetés "datum" mezője a beküldés napja, az nem zárol (különben a beküldés napján nem lehetne rögzíteni).
+          const comment = String(p.megjegyzes || '');
+          const m = comment.match(/\[Érintett napok:([^\]]*)/);
+          if (m && m[1].includes(normalizedDv)) return true;
 
-          // 2. Vizsgálat: ha létezik külön erintett_napok mező
+          // Ha létezik külön erintett_napok mező
           if (p.erintett_napok && String(p.erintett_napok).includes(normalizedDv)) return true;
-
-          // 3. Szigorú PONTOS napiegyezés (a teljes hónapot lezáró startsWith törölve!)
-          const pDate = String(p.datum || p.date || '').substring(0, 10);
-          if (pDate && pDate === normalizedDv) return true;
 
           return false;
         });
