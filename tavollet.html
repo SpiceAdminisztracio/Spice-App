@@ -179,6 +179,28 @@
   }
 
   .nav-link { cursor: pointer; }
+
+  /* Felső menü: a menüpontok soha ne törjenek több sorba (sok fül esetén is egy sorban) */
+  .navbar > .container { max-width: 98%; }
+  .navbar .navbar-brand,
+  .navbar .navbar-nav .nav-link,
+  .navbar .navbar-nav .nav-link * {
+    white-space: nowrap !important;
+    word-break: normal !important;
+    overflow-wrap: normal !important;
+  }
+  @media (min-width: 1200px) {
+    .navbar .navbar-nav { flex-wrap: nowrap; align-items: center; }
+    .navbar .navbar-nav .nav-link { padding-left: 0.6rem !important; padding-right: 0.6rem !important; }
+  }
+  @media (min-width: 1200px) and (max-width: 1599.98px) {
+    .navbar .navbar-brand { font-size: 1.05rem; margin-right: 0.5rem; }
+    .navbar .navbar-nav .nav-link { font-size: 0.88rem; padding-left: 0.45rem !important; padding-right: 0.45rem !important; }
+  }
+  @media (min-width: 1200px) and (max-width: 1379.98px) {
+    .navbar .navbar-nav .nav-link { font-size: 0.8rem; padding-left: 0.3rem !important; padding-right: 0.3rem !important; }
+    .navbar .navbar-nav .nav-link i { display: none; }
+  }
   .hidden { display: none !important; }
   .loading-spinner { display: inline-block; width: 2rem; height: 2rem; }
 
@@ -959,7 +981,7 @@
 <body>
 
 <!-- ASZTALI NAVIGÁCIÓS SÁV (Mobilon automatikusan rejtve) -->
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4 shadow-sm">
+<nav class="navbar navbar-expand-xl navbar-dark bg-dark mb-4 shadow-sm">
   <div class="container">
     <div class="d-flex align-items-center">
       <a class="btn btn-outline-light btn-sm fw-bold me-3 d-flex align-items-center gap-1" href="./index.html" title="Vissza a kezdőlapra">
@@ -993,6 +1015,12 @@
         <li class="nav-item hidden" id="nav-payroll">
           <a class="nav-link text-primary fw-bold" id="nav-link-payroll" onclick="switchView('payroll')" style="cursor: pointer;">
             <i class="bi bi-file-earmark-spreadsheet me-1"></i> Bérszámfejtés
+          </a>
+        </li>
+
+        <li class="nav-item hidden" id="nav-reward">
+          <a class="nav-link fw-bold" id="nav-link-reward" onclick="switchView('reward')" style="cursor: pointer; color: #9333ea;">
+            <i class="bi bi-gift me-1"></i> Jutalomkifizetés
           </a>
         </li>
 
@@ -1683,6 +1711,118 @@
   </div>
 
   <!-- BÉRFEJTÉS NÉZET KONTÉNER -->
+  <!-- JUTALOMKIFIZETÉS (csak HR vezető, pénzügyi igazgató, admin) -->
+  <div id="view-reward" class="hidden d-none">
+    <div class="card p-4 shadow-sm border-top border-4" style="border-top-color: #9333ea !important;">
+      <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-3 gap-2">
+        <h4 class="fw-bold mb-0" style="color: #7e22ce;"><i class="bi bi-gift me-2"></i>Jutalomkifizetés</h4>
+        <span class="badge bg-light text-muted border fw-bold px-3 py-2"><i class="bi bi-lock me-1"></i>Csak HR vezető, pénzügyi igazgató és admin látja</span>
+      </div>
+
+      <div id="rewardNotice" class="alert alert-warning alert-dismissible fade show d-none" role="alert">
+        <span id="rewardNoticeText"></span>
+        <button type="button" class="btn-close" onclick="document.getElementById('rewardNotice').classList.add('d-none')"></button>
+      </div>
+
+      <!-- BÜDZSÉ -->
+      <div class="card border shadow-sm mb-4">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="fw-bold mb-0">Éves jutalombüdzsé – <span id="rewardBudgetYear"></span></h6>
+            <span id="rewardBudgetBadge"></span>
+          </div>
+          <div class="row text-center g-2 mb-2">
+            <div class="col-4"><div class="small text-muted">Éves keret</div><div class="fw-bold fs-5" id="rewardBudgetTotal">-</div></div>
+            <div class="col-4"><div class="small text-muted">Felhasznált</div><div class="fw-bold fs-5" id="rewardBudgetSpent">-</div></div>
+            <div class="col-4"><div class="small text-muted">Maradék</div><div class="fw-bold fs-5" id="rewardBudgetRemaining">-</div></div>
+          </div>
+          <div class="progress" style="height: 8px;"><div class="progress-bar bg-success" id="rewardBudgetBar" style="width: 0%;"></div></div>
+          <div id="rewardBudgetEdit" class="d-none mt-3">
+            <div class="input-group input-group-sm" style="max-width: 360px;">
+              <span class="input-group-text">Éves keret (Ft)</span>
+              <input type="number" min="0" step="1000" class="form-control" id="rewardBudgetInput">
+              <button class="btn btn-success fw-bold" onclick="saveRewardBudget()">Mentés</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ÚJ JUTALOM -->
+      <div class="card border shadow-sm mb-4">
+        <div class="card-body">
+          <h6 class="fw-bold mb-3"><i class="bi bi-plus-circle me-1"></i>Új jutalom rögzítése</h6>
+          <div class="row g-3">
+            <div class="col-md-5">
+              <label class="form-label small fw-bold">Munkatárs</label>
+              <select class="form-select" id="rewardEmployee"><option value="">Betöltés...</option></select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-bold">Nettó összeg (Ft)</label>
+              <input type="number" min="1" step="1" class="form-control" id="rewardAmount" oninput="updateRewardBudgetWarning()">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-bold">Bérszámfejtési hónap</label>
+              <div class="form-control bg-light fw-bold" id="rewardTargetMonth">-</div>
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-bold">Indoklás</label>
+              <textarea class="form-control" id="rewardReason" rows="2" placeholder="Miért jár a jutalom?"></textarea>
+            </div>
+          </div>
+          <div class="small text-muted mt-2" id="rewardMonthInfo"></div>
+          <div class="alert alert-warning py-2 small mt-2 mb-0 d-none" id="rewardBudgetWarning"></div>
+          <div class="text-end mt-3">
+            <button class="btn fw-bold text-white px-4" style="background-color: #9333ea;" id="rewardSubmitBtn" onclick="submitReward()">
+              <i class="bi bi-check2-circle me-1"></i>Jutalom rögzítése
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- LISTA -->
+      <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-2 gap-2">
+        <h6 class="fw-bold mb-0">Rögzített jutalmak</h6>
+        <div class="d-flex gap-2 align-items-center">
+          <label class="fw-bold small text-muted text-nowrap mb-0">Bérszámfejtési hónap:</label>
+          <input type="month" id="rewardMonthFilter" class="form-control form-control-sm fw-bold" onchange="loadRewardList(); loadRewardBudget();">
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr><th>Munkatárs</th><th class="text-end">Nettó összeg</th><th>Indoklás</th><th>Rögzítette</th><th class="text-end">Állapot / Műveletek</th></tr>
+          </thead>
+          <tbody id="rewardListBody"><tr><td colspan="5" class="text-muted text-center py-4">Betöltés...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- JUTALOM MÓDOSÍTÁSA -->
+  <div class="modal fade" id="rewardEditModal" tabindex="-1" aria-hidden="true" style="z-index: 10002;">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0 shadow-lg">
+        <div class="modal-header border-0 text-white" style="background-color: #9333ea;">
+          <h5 class="modal-title fw-bold">Jutalom módosítása</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="rewardEditId">
+          <div class="mb-2 fw-bold" id="rewardEditName"></div>
+          <label class="form-label small fw-bold">Nettó összeg (Ft)</label>
+          <input type="number" min="1" step="1" class="form-control mb-3" id="rewardEditAmount">
+          <label class="form-label small fw-bold">Indoklás</label>
+          <textarea class="form-control" id="rewardEditReason" rows="3"></textarea>
+          <div class="small text-muted mt-2">Ha az összeg változik, a munkatárs menedzsere értesítést kap.</div>
+        </div>
+        <div class="modal-footer border-0 bg-light">
+          <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Mégsem</button>
+          <button type="button" class="btn fw-bold text-white px-4" style="background-color: #9333ea;" id="rewardEditSaveBtn" onclick="saveRewardEdit()">Mentés</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="view-payroll" class="hidden d-none">
     <div class="card p-4 shadow-sm border-top border-4 border-primary">
       <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
@@ -2299,6 +2439,10 @@
   <div class="app-nav-item hidden" id="mbTabPayroll" onclick="switchMobileTab('payroll', this)">
     <i class="bi bi-file-earmark-spreadsheet"></i>
     <span>Bérfejtés</span>
+  </div>
+  <div class="app-nav-item hidden" id="mbTabReward" onclick="switchMobileTab('reward', this)">
+    <i class="bi bi-gift"></i>
+    <span>Jutalom</span>
   </div>
   <div class="app-nav-item hidden" id="mbTabAdmin" onclick="switchMobileTab('admin', this)">
     <i class="bi bi-gear"></i>
@@ -3442,6 +3586,11 @@ function buildDecisionEmailHtml(dolgozoNeve, statusz, tipus, kezdoDatum, vegDatu
 
   const mbPayroll = document.getElementById('mbTabPayroll');
   if (mbPayroll) mbPayroll.classList.toggle('hidden', !canSeePayroll);
+
+  // Jutalomkifizetés: kizárólag HR vezető, pénzügyi igazgató, admin (egyedi fülként sem adható)
+  const canSeeReward = canUseRewardModule(profile);
+  document.getElementById('nav-reward')?.classList.toggle('hidden', !canSeeReward);
+  document.getElementById('mbTabReward')?.classList.toggle('hidden', !canSeeReward);
 }
 
 async function loadMyRequests() {
@@ -7725,6 +7874,436 @@ function payoutReasonText(megjegyzes) {
   return String(megjegyzes || '').replace(/\n?\[Érintett napok:[^\]]*\]/g, '').trim();
 }
 
+// =====================================================================
+// JUTALOMKIFIZETÉS MODUL
+// Láthatóság: HR vezető (manager + „HR vezető” pozíció), pénzügyi igazgató, admin.
+// Bérszámfejtési hónap: a beküldés napja (Europe/Budapest); a hónap utolsó napján
+// beküldött jutalom a következő hónapba kerül. A hónap utolsó napjától végleges.
+// Értesítés: a munkatárs MENEDZSERE (manager_email) kap e-mailt rögzítéskor,
+// összegmódosításkor és törléskor – kivéve, ha nincs menedzser, vagy ő maga a rögzítő.
+// =====================================================================
+const REWARD_HONAPOK = ['január', 'február', 'március', 'április', 'május', 'június', 'július', 'augusztus', 'szeptember', 'október', 'november', 'december'];
+window.rewardState = { profiles: [], rows: [], submitYear: null, submitBudget: null, submitSpent: 0 };
+
+function rewardNorm(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim(); }
+function rewardPad(n) { return String(n).padStart(2, '0'); }
+function rewardFt(n) { return Math.round(Number(n || 0)).toLocaleString('hu-HU') + ' Ft'; }
+function isRewardHrLeaderProfile(p) { return !!p && roleOf(p) === 'manager' && /hr[\s_-]*vezet/.test(rewardNorm(p.pozicio)); }
+function isRewardFinDirectorProfile(p) { return !!p && /penzugyi[\s_-]*igazgat/.test(rewardNorm(p.pozicio)); }
+function canUseRewardModule(p) { p = p || currentUserProfile; return !!p && (roleOf(p) === 'admin' || isRewardHrLeaderProfile(p) || isRewardFinDirectorProfile(p)); }
+function canSetRewardBudget(p) { p = p || currentUserProfile; return !!p && (roleOf(p) === 'admin' || isRewardFinDirectorProfile(p)); }
+function rewardRoleLabel(p) {
+  if (isRewardHrLeaderProfile(p)) return 'HR vezető';
+  if (isRewardFinDirectorProfile(p)) return 'pénzügyi igazgató';
+  if (p && roleOf(p) === 'admin') return 'admin';
+  return '';
+}
+
+// Mai nap budapesti idő szerint (YYYY-MM-DD)
+function rewardTodayYmd() {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Budapest', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+function rewardLastDayOf(ho) { const [y, m] = ho.split('-').map(Number); return `${ho}-${rewardPad(new Date(y, m, 0).getDate())}`; }
+// Ugyanaz a szabály, mint az adatbázisban (reward_month_for)
+function rewardMonthFor(ymd) {
+  const [y, m] = ymd.split('-').map(Number);
+  const ho = `${y}-${rewardPad(m)}`;
+  if (ymd === rewardLastDayOf(ho)) { const n = new Date(y, m, 1); return `${n.getFullYear()}-${rewardPad(n.getMonth() + 1)}`; }
+  return ho;
+}
+function rewardMonthLocked(ho) { return rewardTodayYmd() >= rewardLastDayOf(ho); }
+function rewardMonthLabel(ho) { const [y, m] = String(ho || '').split('-').map(Number); return (y && m) ? `${y}. ${REWARD_HONAPOK[m - 1]}` : String(ho || ''); }
+function rewardLastEditLabel(ho) {
+  const [y, m] = ho.split('-').map(Number);
+  const d = new Date(y, m, 0).getDate() - 1;
+  return `${y}. ${REWARD_HONAPOK[m - 1]} ${d}`; // utána „-ig” rag következik
+}
+function showRewardNotice(html, kind = 'warning') {
+  const box = document.getElementById('rewardNotice');
+  const txt = document.getElementById('rewardNoticeText');
+  if (!box || !txt) return;
+  box.className = `alert alert-${kind} alert-dismissible fade show`;
+  txt.innerHTML = html;
+}
+
+async function loadRewardView() {
+  const body = document.getElementById('rewardListBody');
+  if (!canUseRewardModule()) {
+    if (body) body.innerHTML = '<tr><td colspan="5" class="text-danger text-center py-4">Ehhez a modulhoz nincs jogosultságod.</td></tr>';
+    return;
+  }
+
+  const today = rewardTodayYmd();
+  const curHo = rewardMonthFor(today);
+  window.rewardState.submitYear = Number(curHo.slice(0, 4));
+
+  const filter = document.getElementById('rewardMonthFilter');
+  if (filter && !filter.value) filter.value = curHo;
+
+  const tm = document.getElementById('rewardTargetMonth');
+  if (tm) tm.textContent = rewardMonthLabel(curHo);
+  const info = document.getElementById('rewardMonthInfo');
+  if (info) {
+    info.innerHTML = (curHo !== today.slice(0, 7))
+      ? `Ma a hónap utolsó napja, a(z) ${rewardMonthLabel(today.slice(0, 7))} havi bérszámfejtés lezárult – a most rögzített jutalom a <strong>${rewardMonthLabel(curHo)}</strong> havi bérszámfejtésbe kerül.`
+      : `A jutalom a beküldés hónapjának bérszámfejtésébe kerül. Módosítani és törölni ${rewardLastEditLabel(curHo)}-ig lehet, utána végleges.`;
+  }
+  document.getElementById('rewardBudgetEdit')?.classList.toggle('d-none', !canSetRewardBudget());
+
+  try {
+    const { data, error } = await supabaseClient.from('profiles').select('*').order('nev', { ascending: true });
+    if (error) throw error;
+    window.rewardState.profiles = data || [];
+    const sel = document.getElementById('rewardEmployee');
+    if (sel) {
+      const keep = sel.value;
+      const active = window.rewardState.profiles.filter(p => p.email && !isInactiveProfile(p));
+      sel.innerHTML = '<option value="">-- Válassz munkatársat --</option>' +
+        active.map(p => `<option value="${escapeHtml(String(p.email).toLowerCase().trim())}">${escapeHtml(p.nev || p.email)}</option>`).join('');
+      if (keep) sel.value = keep;
+    }
+  } catch (e) {
+    console.error('Jutalom: profilok betöltési hiba', e);
+  }
+
+  await Promise.all([loadRewardBudget(), loadRewardList(), loadRewardSubmitBudget()]);
+}
+
+async function fetchRewardYear(year) {
+  const [bRes, sRes] = await Promise.all([
+    supabaseClient.from('reward_budgets').select('*').eq('ev', year).maybeSingle(),
+    supabaseClient.from('reward_payouts').select('netto_osszeg').like('berszamfejtesi_ho', `${year}-%`)
+  ]);
+  if (bRes.error) throw bRes.error;
+  if (sRes.error) throw sRes.error;
+  const spent = (sRes.data || []).reduce((s, r) => s + Number(r.netto_osszeg || 0), 0);
+  return { budget: bRes.data ? Number(bRes.data.keret_ft || 0) : null, spent };
+}
+
+// A beküldéshez tartozó év (büdzsé-figyelmeztetés)
+async function loadRewardSubmitBudget() {
+  try {
+    const y = window.rewardState.submitYear;
+    if (!y) return;
+    const r = await fetchRewardYear(y);
+    window.rewardState.submitBudget = r.budget;
+    window.rewardState.submitSpent = r.spent;
+    updateRewardBudgetWarning();
+  } catch (e) { console.warn('Jutalom büdzsé hiba:', e); }
+}
+
+function rewardOverrunText(extraAmount) {
+  const st = window.rewardState;
+  const amount = Number(extraAmount || 0);
+  if (!(amount > 0)) return '';
+  if (st.submitBudget === null || st.submitBudget <= 0) return `Figyelem: ${st.submitYear}. évre nincs jutalombüdzsé beállítva.`;
+  const after = st.submitSpent + amount;
+  if (after > st.submitBudget) {
+    return `Figyelem: ezzel a jutalommal a ${st.submitYear}. évi jutalombüdzsé túllépésre kerül ${rewardFt(after - st.submitBudget)} összeggel (keret: ${rewardFt(st.submitBudget)}, felhasznált a jutalommal: ${rewardFt(after)}). A rögzítés ettől még lehetséges.`;
+  }
+  return '';
+}
+
+function updateRewardBudgetWarning() {
+  const box = document.getElementById('rewardBudgetWarning');
+  if (!box) return;
+  const txt = rewardOverrunText(document.getElementById('rewardAmount')?.value);
+  box.textContent = txt;
+  box.classList.toggle('d-none', !txt);
+}
+
+async function loadRewardBudget() {
+  const filter = document.getElementById('rewardMonthFilter');
+  const year = Number((filter?.value || rewardMonthFor(rewardTodayYmd())).slice(0, 4));
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('rewardBudgetYear', `${year}.`);
+  try {
+    const { budget, spent } = await fetchRewardYear(year);
+    const total = budget || 0;
+    const remaining = total - spent;
+    set('rewardBudgetTotal', budget === null ? 'nincs beállítva' : rewardFt(total));
+    set('rewardBudgetSpent', rewardFt(spent));
+    set('rewardBudgetRemaining', rewardFt(remaining));
+    const remEl = document.getElementById('rewardBudgetRemaining');
+    if (remEl) remEl.className = `fw-bold fs-5 ${remaining < 0 ? 'text-danger' : 'text-success'}`;
+    const pct = total > 0 ? Math.round(spent / total * 100) : (spent > 0 ? 100 : 0);
+    const bar = document.getElementById('rewardBudgetBar');
+    if (bar) {
+      bar.style.width = `${Math.min(100, pct)}%`;
+      bar.className = `progress-bar ${remaining < 0 || pct > 90 ? 'bg-danger' : (pct > 70 ? 'bg-warning' : 'bg-success')}`;
+    }
+    const badge = document.getElementById('rewardBudgetBadge');
+    if (badge) {
+      badge.className = remaining < 0 ? 'badge bg-danger' : 'badge bg-light text-muted border';
+      badge.textContent = remaining < 0 ? 'Túllépve' : (total > 0 ? `${pct}%` : '');
+    }
+    const inp = document.getElementById('rewardBudgetInput');
+    if (inp && document.activeElement !== inp) inp.value = budget === null ? '' : total;
+  } catch (e) {
+    console.error('Jutalom büdzsé betöltési hiba:', e);
+    set('rewardBudgetTotal', 'hiba');
+  }
+}
+
+async function saveRewardBudget() {
+  if (!canSetRewardBudget()) { showToast('A büdzsét csak a pénzügyi igazgató vagy az admin állíthatja be.', 'danger'); return; }
+  const filter = document.getElementById('rewardMonthFilter');
+  const year = Number((filter?.value || rewardMonthFor(rewardTodayYmd())).slice(0, 4));
+  const val = Number(document.getElementById('rewardBudgetInput')?.value);
+  if (!isFinite(val) || val < 0) { showToast('Adj meg érvényes összeget!', 'warning'); return; }
+  try {
+    const { error } = await supabaseClient.from('reward_budgets').upsert({ ev: year, keret_ft: Math.round(val) }, { onConflict: 'ev' });
+    if (error) throw error;
+    showToast(`A ${year}. évi jutalombüdzsé mentve: ${rewardFt(val)}`, 'success');
+    await Promise.all([loadRewardBudget(), loadRewardSubmitBudget()]);
+  } catch (e) {
+    showToast('Hiba a büdzsé mentésekor: ' + e.message, 'danger');
+  }
+}
+
+async function loadRewardList() {
+  const body = document.getElementById('rewardListBody');
+  if (!body) return;
+  const ho = document.getElementById('rewardMonthFilter')?.value || rewardMonthFor(rewardTodayYmd());
+  body.innerHTML = '<tr><td colspan="5" class="text-muted text-center py-4"><div class="spinner-border spinner-border-sm me-2"></div>Betöltés...</td></tr>';
+  try {
+    const { data, error } = await supabaseClient.from('reward_payouts').select('*').eq('berszamfejtesi_ho', ho).order('created_at', { ascending: false });
+    if (error) throw error;
+    window.rewardState.rows = data || [];
+    if (!window.rewardState.rows.length) {
+      body.innerHTML = `<tr><td colspan="5" class="text-muted text-center py-4">${escapeHtml(rewardMonthLabel(ho))} hónapra nincs rögzített jutalom.</td></tr>`;
+      return;
+    }
+    const locked = rewardMonthLocked(ho);
+    let sum = 0;
+    let html = '';
+    window.rewardState.rows.forEach(r => {
+      sum += Number(r.netto_osszeg || 0);
+      const created = r.created_at ? new Date(r.created_at).toLocaleString('hu-HU', { timeZone: 'Europe/Budapest', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+      const modified = r.updated_at ? `<div class="small text-muted">Módosítva: ${escapeHtml(new Date(r.updated_at).toLocaleString('hu-HU', { timeZone: 'Europe/Budapest', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }))}${r.updated_by ? ' (' + escapeHtml(r.updated_by) + ')' : ''}</div>` : '';
+      const actions = locked
+        ? '<span class="badge bg-secondary"><i class="bi bi-lock-fill me-1"></i>Végleges</span>'
+        : `<button class="btn btn-sm btn-outline-primary fw-bold me-1" onclick="openRewardEdit('${r.id}')"><i class="bi bi-pencil"></i> Módosítás</button>` +
+          `<button class="btn btn-sm btn-outline-danger fw-bold" onclick="deleteReward('${r.id}')"><i class="bi bi-trash"></i> Törlés</button>`;
+      html += `<tr>
+        <td class="fw-bold">${escapeHtml(r.nev || r.user_email)}</td>
+        <td class="text-end fw-bold text-success text-nowrap">${rewardFt(r.netto_osszeg)}</td>
+        <td class="small" style="max-width: 320px; white-space: normal;">${escapeHtml(r.indoklas || '')}</td>
+        <td class="small">${escapeHtml(r.bekuldo_nev || r.bekuldo_email || '')}<div class="text-muted">${escapeHtml(created)}</div>${modified}</td>
+        <td class="text-end text-nowrap">${actions}</td>
+      </tr>`;
+    });
+    html += `<tr class="table-light"><td class="fw-bold">Összesen (${escapeHtml(rewardMonthLabel(ho))})</td><td class="text-end fw-bold text-nowrap">${rewardFt(sum)}</td><td colspan="3" class="small text-muted">${locked ? 'A hónap lezárult, a tételek véglegesek.' : 'Módosítható / törölhető ' + escapeHtml(rewardLastEditLabel(ho)) + '-ig.'}</td></tr>`;
+    body.innerHTML = html;
+  } catch (e) {
+    console.error('Jutalom lista hiba:', e);
+    body.innerHTML = `<tr><td colspan="5" class="text-danger text-center py-4">Hiba a betöltéskor: ${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+async function submitReward() {
+  if (!canUseRewardModule()) return;
+  const email = String(document.getElementById('rewardEmployee')?.value || '').toLowerCase().trim();
+  const amount = Math.round(Number(document.getElementById('rewardAmount')?.value));
+  const reason = String(document.getElementById('rewardReason')?.value || '').trim();
+  if (!email) { showToast('Válaszd ki a munkatársat!', 'warning'); return; }
+  if (!(amount > 0)) { showToast('Adj meg érvényes nettó összeget!', 'warning'); return; }
+  if (!reason) { showToast('Az indoklás kötelező!', 'warning'); return; }
+
+  const emp = window.rewardState.profiles.find(p => String(p.email || '').toLowerCase().trim() === email && !isInactiveProfile(p));
+  const overrun = rewardOverrunText(amount);
+  const btn = document.getElementById('rewardSubmitBtn');
+  if (btn) btn.disabled = true;
+  try {
+    const { data, error } = await supabaseClient.from('reward_payouts').insert({
+      user_email: email,
+      profile_id: emp?.id || null,
+      nev: emp?.nev || null,
+      netto_osszeg: amount,
+      indoklas: reason,
+      berszamfejtesi_ho: rewardMonthFor(rewardTodayYmd()) // a szerver úgyis felülírja
+    }).select().single();
+    if (error) throw error;
+
+    const notify = await notifyRewardManager('created', data);
+    document.getElementById('rewardAmount').value = '';
+    document.getElementById('rewardReason').value = '';
+    document.getElementById('rewardEmployee').value = '';
+    const filter = document.getElementById('rewardMonthFilter');
+    if (filter) filter.value = data.berszamfejtesi_ho;
+
+    const base = `Jutalom rögzítve: <strong>${escapeHtml(data.nev || data.user_email)}</strong>, ${rewardFt(data.netto_osszeg)} (${escapeHtml(rewardMonthLabel(data.berszamfejtesi_ho))}).`;
+    const overrunHtml = overrun ? `<br>${escapeHtml(overrun)}` : '';
+    if (notify.sent) {
+      showToast('Jutalom rögzítve, a menedzser értesítést kapott.', 'success');
+      if (overrun) showRewardNotice(base + overrunHtml, 'warning');
+    } else {
+      showRewardNotice(`${base}<br><strong>Értesítő nem ment ki:</strong> ${escapeHtml(notify.reason)}.${overrunHtml}`, 'warning');
+    }
+    await Promise.all([loadRewardList(), loadRewardBudget(), loadRewardSubmitBudget()]);
+    updateRewardBudgetWarning();
+  } catch (e) {
+    console.error('Jutalom rögzítési hiba:', e);
+    showToast('Hiba a rögzítéskor: ' + e.message, 'danger');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function openRewardEdit(id) {
+  const r = window.rewardState.rows.find(x => x.id === id);
+  if (!r) return;
+  if (rewardMonthLocked(r.berszamfejtesi_ho)) { showToast('Ez a jutalom már végleges.', 'warning'); return; }
+  document.getElementById('rewardEditId').value = r.id;
+  document.getElementById('rewardEditName').textContent = `${r.nev || r.user_email} – ${rewardMonthLabel(r.berszamfejtesi_ho)}`;
+  document.getElementById('rewardEditAmount').value = Math.round(Number(r.netto_osszeg || 0));
+  document.getElementById('rewardEditReason').value = r.indoklas || '';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('rewardEditModal')).show();
+}
+
+async function saveRewardEdit() {
+  const id = document.getElementById('rewardEditId').value;
+  const before = window.rewardState.rows.find(x => x.id === id);
+  if (!before) return;
+  const amount = Math.round(Number(document.getElementById('rewardEditAmount').value));
+  const reason = String(document.getElementById('rewardEditReason').value || '').trim();
+  if (!(amount > 0)) { showToast('Adj meg érvényes nettó összeget!', 'warning'); return; }
+  if (!reason) { showToast('Az indoklás kötelező!', 'warning'); return; }
+  const oldAmount = Math.round(Number(before.netto_osszeg || 0));
+  if (amount === oldAmount && reason === String(before.indoklas || '').trim()) {
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('rewardEditModal')).hide();
+    return;
+  }
+  const btn = document.getElementById('rewardEditSaveBtn');
+  if (btn) btn.disabled = true;
+  try {
+    const { data, error } = await supabaseClient.from('reward_payouts').update({ netto_osszeg: amount, indoklas: reason }).eq('id', id).select().single();
+    if (error) throw error;
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('rewardEditModal')).hide();
+
+    if (amount !== oldAmount) {
+      const notify = await notifyRewardManager('modified', data, { oldAmount });
+      if (notify.sent) showToast('Jutalom módosítva, a menedzser értesítést kapott.', 'success');
+      else showRewardNotice(`Jutalom módosítva: <strong>${escapeHtml(data.nev || data.user_email)}</strong>, ${rewardFt(oldAmount)} → ${rewardFt(amount)}.<br><strong>Értesítő nem ment ki:</strong> ${escapeHtml(notify.reason)}.`, 'warning');
+    } else {
+      showToast('Indoklás módosítva (összeg nem változott, értesítő nem ment).', 'success');
+    }
+    await Promise.all([loadRewardList(), loadRewardBudget(), loadRewardSubmitBudget()]);
+  } catch (e) {
+    console.error('Jutalom módosítási hiba:', e);
+    showToast('Hiba a módosításkor: ' + e.message, 'danger');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function deleteReward(id) {
+  const r = window.rewardState.rows.find(x => x.id === id);
+  if (!r) return;
+  showConfirm(`Biztosan törlöd <strong>${escapeHtml(r.nev || r.user_email)}</strong> ${rewardFt(r.netto_osszeg)} összegű jutalmát? A menedzsere értesítést kap a törlésről.`, async () => {
+    try {
+      const { data, error } = await supabaseClient.from('reward_payouts').delete().eq('id', id).select();
+      if (error) throw error;
+      if (!data || !data.length) throw new Error('A tétel nem törölhető (nincs jogosultság, vagy már nem létezik).');
+      const notify = await notifyRewardManager('deleted', r);
+      if (notify.sent) showToast('Jutalom törölve, a menedzser értesítést kapott.', 'success');
+      else showRewardNotice(`Jutalom törölve: <strong>${escapeHtml(r.nev || r.user_email)}</strong>, ${rewardFt(r.netto_osszeg)}.<br><strong>Értesítő nem ment ki:</strong> ${escapeHtml(notify.reason)}.`, 'warning');
+      await Promise.all([loadRewardList(), loadRewardBudget(), loadRewardSubmitBudget()]);
+    } catch (e) {
+      console.error('Jutalom törlési hiba:', e);
+      showToast('Hiba a törléskor: ' + e.message, 'danger');
+    }
+  });
+}
+
+// Értesítő e-mail a munkatárs menedzserének (nem csoportvezető, nem leader)
+// action: 'created' | 'modified' | 'deleted'  →  { sent: bool, reason: string }
+async function notifyRewardManager(action, rw, extra = {}) {
+  try {
+    const profiles = window.rewardState.profiles || [];
+    const empEmail = String(rw.user_email || '').toLowerCase().trim();
+    const emp = profiles.find(p => rw.profile_id && p.id === rw.profile_id) ||
+                profiles.find(p => String(p.email || '').toLowerCase().trim() === empEmail && !isInactiveProfile(p)) ||
+                profiles.find(p => String(p.email || '').toLowerCase().trim() === empEmail);
+    const mgrEmail = String(emp?.manager_email || '').toLowerCase().trim();
+    const me = String(currentUserProfile?.email || '').toLowerCase().trim();
+
+    if (!mgrEmail || !mgrEmail.includes('@')) return { sent: false, reason: 'a munkatársnak nincs menedzser megadva' };
+    if (mgrEmail === me) return { sent: false, reason: 'a munkatárs menedzsere te magad vagy' };
+    if (typeof sendAutomatedEmail !== 'function') return { sent: false, reason: 'az e-mail küldő nem érhető el' };
+
+    const esc = (t) => escapeHtml(String(t ?? ''));
+    const mgr = profiles.find(p => String(p.email || '').toLowerCase().trim() === mgrEmail && !isInactiveProfile(p));
+    const mgrName = mgr?.nev || '';
+    const hrLeader = profiles.find(p => isRewardHrLeaderProfile(p) && !isInactiveProfile(p));
+    const hrName = hrLeader?.nev || '';
+    const actorName = currentUserProfile?.nev || currentUserProfile?.email || '';
+    const actorRole = rewardRoleLabel(currentUserProfile);
+    const actorFull = actorRole ? `${actorName} (${actorRole})` : actorName;
+    const empName = rw.nev || emp?.nev || empEmail;
+    const monthLabel = rewardMonthLabel(rw.berszamfejtesi_ho);
+    const contactText = hrName ? `${hrName} HR vezetőt` : 'a HR vezetőt';
+
+    let subject, title, color, intro, introHtml, rowsText, rowsHtml;
+    const row = (label, value, style = '') => `<tr><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; color: #64748b; width: 40%;">${label}</td><td style="padding: 6px; border-bottom: 1px solid #f1f5f9; ${style}">${value}</td></tr>`;
+
+    if (action === 'modified') {
+      subject = `Jutalom módosítva – ${empName}`;
+      title = '✏️ Jutalom módosítva'; color = '#b45309';
+      intro = `Tájékoztatunk, hogy ${actorFull} módosította a csapatod tagjának kiírt jutalmat:`;
+      introHtml = `Tájékoztatunk, hogy <strong>${esc(actorFull)}</strong> módosította a csapatod tagjának kiírt jutalmat:`;
+      rowsText = `- Munkatárs: ${empName}\n- Korábbi összeg: ${rewardFt(extra.oldAmount)} (nettó)\n- Új összeg: ${rewardFt(rw.netto_osszeg)} (nettó)\n- Bérszámfejtési hónap: ${monthLabel}\n- Indoklás: ${rw.indoklas || '-'}\n- Módosította: ${actorFull}`;
+      rowsHtml = row('Munkatárs:', esc(empName), 'font-weight: bold;') +
+        row('Korábbi összeg:', `<span style="text-decoration: line-through; color: #94a3b8;">${esc(rewardFt(extra.oldAmount))}</span> (nettó)`) +
+        row('Új összeg:', `${esc(rewardFt(rw.netto_osszeg))} (nettó)`, 'font-weight: bold; color: #b45309;') +
+        row('Bérszámfejtési hónap:', esc(monthLabel)) +
+        row('Indoklás:', esc(rw.indoklas || '-'), 'font-style: italic;') +
+        row('Módosította:', esc(actorFull));
+    } else if (action === 'deleted') {
+      subject = `Jutalom törölve – ${empName}`;
+      title = '🗑️ Jutalom törölve'; color = '#b91c1c';
+      intro = `Tájékoztatunk, hogy ${actorFull} törölte a csapatod tagjának korábban kiírt jutalmát, így az nem kerül kifizetésre:`;
+      introHtml = `Tájékoztatunk, hogy <strong>${esc(actorFull)}</strong> törölte a csapatod tagjának korábban kiírt jutalmát, így az <strong>nem kerül kifizetésre</strong>:`;
+      rowsText = `- Munkatárs: ${empName}\n- Törölt összeg: ${rewardFt(rw.netto_osszeg)} (nettó)\n- Bérszámfejtési hónap: ${monthLabel}\n- Eredeti indoklás: ${rw.indoklas || '-'}\n- Törölte: ${actorFull}`;
+      rowsHtml = row('Munkatárs:', esc(empName), 'font-weight: bold;') +
+        row('Törölt összeg:', `<span style="text-decoration: line-through;">${esc(rewardFt(rw.netto_osszeg))}</span> (nettó)`, 'color: #b91c1c;') +
+        row('Bérszámfejtési hónap:', esc(monthLabel)) +
+        row('Eredeti indoklás:', esc(rw.indoklas || '-'), 'font-style: italic;') +
+        row('Törölte:', esc(actorFull));
+    } else {
+      subject = `Jutalom kiírása – ${empName}`;
+      title = '🎁 Jutalom kiírása'; color = '#7e22ce';
+      intro = `Tájékoztatunk, hogy ${actorFull} jutalmat írt ki a csapatod tagjának:`;
+      introHtml = `Tájékoztatunk, hogy <strong>${esc(actorFull)}</strong> jutalmat írt ki a csapatod tagjának:`;
+      rowsText = `- Munkatárs: ${empName}\n- Összeg: ${rewardFt(rw.netto_osszeg)} (nettó)\n- Bérszámfejtési hónap: ${monthLabel}\n- Indoklás: ${rw.indoklas || '-'}\n- Rögzítette: ${actorFull}`;
+      rowsHtml = row('Munkatárs:', esc(empName), 'font-weight: bold;') +
+        row('Összeg:', `${esc(rewardFt(rw.netto_osszeg))} (nettó)`, 'font-weight: bold; color: #16a34a;') +
+        row('Bérszámfejtési hónap:', esc(monthLabel)) +
+        row('Indoklás:', esc(rw.indoklas || '-'), 'font-style: italic;') +
+        row('Rögzítette:', esc(actorFull));
+    }
+
+    const greeting = mgrName ? `Kedves ${mgrName}!` : 'Kedves Kolléga!';
+    const footer = `Ha nem értesz egyet ezzel, vagy szeretnél róla beszélni, kérjük, keresd közvetlenül ${contactText}.`;
+    const bodyText = `${greeting}\n\n${intro}\n\n${rowsText}\n\n${footer}\n\nEz egy automatikus értesítő, kérjük, ne válaszolj rá.`;
+    const htmlBody = `
+      <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; max-width: 520px;">
+        <h3 style="color: ${color}; margin-top: 0;">${title}</h3>
+        <p>${esc(greeting)}</p>
+        <p>${introHtml}</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 14px;">${rowsHtml}</table>
+        <p>${esc(footer)}</p>
+        <p style="color: #94a3b8; font-size: 12px; margin-bottom: 0;">Ez egy automatikus értesítő, kérjük, ne válaszolj rá.</p>
+      </div>`;
+
+    const ok = await sendAutomatedEmail(mgrEmail, subject, bodyText, htmlBody);
+    return ok ? { sent: true, reason: '' } : { sent: false, reason: 'az e-mail küldése nem sikerült (hálózati / szerver hiba)' };
+  } catch (e) {
+    console.warn('Jutalom értesítő hiba:', e);
+    return { sent: false, reason: 'hiba az értesítő összeállításakor' };
+  }
+}
+
 function notifyPayoutSubmitter(dec, action, extra = {}) {
   try {
     if (!dec || typeof sendAutomatedEmail !== 'function') return;
@@ -7864,7 +8443,7 @@ async function submitChallenge() {
 }
 
   function switchView(viewName) {
-  ['dashboard', 'team', 'calendar', 'admin', 'overtime-approval', 'payroll'].forEach(v => {
+  ['dashboard', 'team', 'calendar', 'admin', 'overtime-approval', 'payroll', 'reward'].forEach(v => {
     const el = document.getElementById(`view-${v}`);
     if (el) {
       el.classList.add('hidden');
@@ -7894,6 +8473,7 @@ async function submitChallenge() {
   if (viewName === 'calendar') loadGlobalTimeline();
   if (viewName === 'admin') loadAdminDashboard();
   if (viewName === 'payroll') loadPayrollReport();
+  if (viewName === 'reward') loadRewardView();
   if (viewName === 'overtime-approval') {
     loadOvertimeApprovals();
     if (typeof renderOvertimeBudgets === 'function') {
@@ -7917,6 +8497,7 @@ async function submitChallenge() {
       'team': 'mbTabTeam',
       'overtime-approval': 'mbTabOvertime',
       'payroll': 'mbTabPayroll',
+      'reward': 'mbTabReward',
       'admin': 'mbTabAdmin'
     };
 
@@ -8251,12 +8832,16 @@ async function submitChallenge() {
     };
 
     // 🎯 1. LEKÉRDEZZÜK A PROFILOKAT, TÁVOLLÉTEKET, KIFIZETÉSEKET ÉS A SUPABASE HOLIDAYS TÁBLÁT IS
-    const [profilesRes, allLeaves, allPayouts, holidaysRes] = await Promise.all([
+    const [profilesRes, allLeaves, allPayouts, holidaysRes, rewardRes] = await Promise.all([
       supabaseClient.from('profiles').select('*').order('nev', { ascending: true }),
       fetchAllData('leave_requests'),
       fetchAllData('overtime_decisions'),
-      supabaseClient.from('holidays').select('*')
+      supabaseClient.from('holidays').select('*'),
+      // Jutalmak: csak munkatársankénti havi összeg (részletek nélkül)
+      Promise.resolve(supabaseClient.rpc('get_monthly_reward_totals', { p_ho: monthVal })).catch(e => ({ data: null, error: e }))
     ]);
+    if (rewardRes?.error) console.warn('Jutalom összesítő nem érhető el:', rewardRes.error);
+    const monthlyRewards = (rewardRes?.data || []).map(r => ({ profile_id: r.profile_id, email: normalizeStr(r.user_email), osszeg: Number(r.osszeg || 0) }));
 
     if (profilesRes.error) throw profilesRes.error;
 
@@ -8312,7 +8897,7 @@ async function submitChallenge() {
         <th rowspan="2" style="width: 54px; min-width: 52px;" class="col-summary-head align-middle text-primary fw-bold" title="Még kivehető idei szabadság a hónapban">Még<br>kivehető</th>
         <th rowspan="2" style="width: 54px; min-width: 52px;" class="col-summary-head align-middle text-secondary fw-bold" title="Még kivehető tavalyi szabadság a hónapban">Még kiv.<br>tavalyi</th>
         <th colspan="6" class="align-middle fw-bold" style="background-color: #f1f5f9 !important; color: #334155 !important;">Hónapban kivett (nap)</th>
-        <th rowspan="2" style="width: 80px; background-color: #d1fae5 !important; color: #065f46 !important;" class="align-middle fw-bold" title="Túlmunka kifizetés">Túlmunka (számított nettó)</th>
+        <th rowspan="2" style="width: 80px; background-color: #d1fae5 !important; color: #065f46 !important;" class="align-middle fw-bold" title="Túlmunka kifizetés és jutalom összesen (nettó)">Túlmunka (számított nettó)</th>
     `;
 
     for (let i = 1; i <= daysInMonth; i++) {
@@ -8498,6 +9083,12 @@ async function submitChallenge() {
 
       userPayouts.forEach(po => {
         haviTuloOsszeg += Number(po.osszeg || po.eredeti_osszeg || 0);
+      });
+
+      // Jutalom (nettó) hozzáadása ugyanebbe az oszlopba
+      monthlyRewards.forEach(rw => {
+        const isMatch = (rw.profile_id && p.id) ? rw.profile_id === p.id : (pEmail && rw.email === pEmail);
+        if (isMatch) haviTuloOsszeg += rw.osszeg;
       });
 
       let payoutDisplay = '-';
