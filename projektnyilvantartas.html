@@ -1289,6 +1289,33 @@
     return isWorkdayYMD(ymd) && !isOffDayFor(profileOrEmail, ymd);
   }
 
+  // --- Nyitási kérelem lejárata (munkanapokban) ---
+  // A jóváhagyott nyitás a jóváhagyás napján és a munkatárs KÖVETKEZŐ munkanapján a nap végéig él.
+  // A munkatárs munkanapja: nem hétvége / ünnep, nem a fix szabadnapja, és nincs rá egész napos távolléte.
+  // A végleges értéket az adatbázis számolja (pn_request_expiry), ez csak tartalék, ha az SQL még nincs lefuttatva.
+  function jsRequestExpiryIso(profileOrEmail, fromDate) {
+    const email = typeof profileOrEmail === 'string' ? profileOrEmail : profileOrEmail?.email;
+    const d = new Date(fromDate || Date.now());
+    d.setHours(12, 0, 0, 0);
+    for (let i = 0; i < 60; i++) {
+      d.setDate(d.getDate() + 1);
+      if (isPersonWorkday(email, getLocalYMD(d))) break;
+    }
+    d.setHours(23, 59, 59, 0);
+    return d.toISOString();
+  }
+
+  // "2026.11.30. (hétfő) végéig"
+  function formatExpiryHu(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    // az adatbázis a nap utáni éjfélt adja vissza: ilyenkor az előző nap a lejárat napja
+    if (d.getHours() === 0 && d.getMinutes() === 0) d.setMinutes(d.getMinutes() - 1);
+    const napok = ['vasárnap', 'hétfő', 'kedd', 'szerda', 'csütörtök', 'péntek', 'szombat'];
+    return `${getLocalYMD(d).replace(/-/g, '.')}. (${napok[d.getDay()]}) végéig`;
+  }
+
   // --- Távollét-típusok ---
   // 'regular' | 'sick' | 'egyedi' | null  (ugyanaz, mint a Távollét Kezelő getHOKind függvénye)
   function getHOKind(tipus) {
@@ -3410,9 +3437,10 @@ function buildRequestsExportSheets(monthVal, header, dataRows) {
   const iStatus = idx('Státusz'), iType = idx('Típus (Büntetéses/Büntetlen)'), iOra = idx('Igényelt óra');
   const cnt = (f) => dataRows.filter(f).length;
   const sub = `Készült: ${today}  ·  ${dataRows.length} kérelem  ·  jóváhagyva: ${cnt(r => r[iStatus] === 'Jóváhagyva')}`
-    + `  ·  elutasítva: ${cnt(r => r[iStatus] === 'Elutasítva')}  ·  függőben: ${cnt(r => r[iStatus] === 'Függőben')}`
+    + `  ·  elutasítva: ${cnt(r => r[iStatus] === 'Elutasítva')}  ·  felettesnél: ${cnt(r => String(r[iStatus]).startsWith('Felettesnél'))}`
+    + `  ·  admin véglegesítésre vár: ${cnt(r => r[iStatus] === 'Admin véglegesítésre vár')}`
     + `  ·  büntetéses: ${cnt(r => r[iType] === 'BÜNTETÉSES')}`;
-  const widths = [24, 30, 12, 9, 12, 36, 13, 22, 20, 30, 21, 20, 30, 21, 21];
+  const widths = [24, 30, 12, 9, 12, 36, 24, 22, 20, 30, 21, 20, 30, 21, 21];
   const sheet = { name: 'Nyitási kérelmek', cols: widths, rows: [], merges: [`A1:${lastCol}1`, `A2:${lastCol}2`], freezeRow: 4,
                   autoFilter: `A4:${lastCol}${dataRows.length + 4}` };
   sheet.rows.push({ cells: [{ v: `Nyitási kérelmek és döntések – ${monthVal}`, s: S.title }], height: 24 });
@@ -5652,7 +5680,6 @@ async function executeSendAllReminders() {
       return showModal("Jelenleg nincs jóváhagyásra váró kérelem.", "Információ");
     }
 
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const approvedAt = new Date().toISOString();
     
     // 🎯 AZ ÉPPEN BEJELENTKEZETT ADMIN NEVÉNEK BEHÚZÁSA
@@ -5670,15 +5697,18 @@ async function executeSendAllReminders() {
         .update({ 
           status: 'approved', 
           approver_comment: finalComment,
-          expires_at: expiresAt, 
+          expires_at: jsRequestExpiryIso(req.user_email), // az adatbázis felülírja a pontos értékkel
           approved_at: approvedAt 
         })
-        .eq('id', req.id);
+        .eq('id', req.id)
+        .select('id, expires_at');
     });
 
     const results = await Promise.all(updatePromises);
     const hasError = results.find(r => r.error);
     if (hasError) throw hasError.error;
+    const expiryById = {};
+    results.forEach(r => (r.data || []).forEach(row => { expiryById[row.id] = row.expires_at; }));
 
     for (const req of pendingReqs) {
       const targetEmail = req.user_email || req.email;
@@ -5686,7 +5716,8 @@ async function executeSendAllReminders() {
       const reqDate = req.datum || req.date;
 
       const subject = `Pótlási kérelem elfogadva - ${reqDate}`;
-      const body = `Szia ${targetName}!\n\nA(z) ${reqDate} napra vonatkozó pótlási kérelmedet az Adminisztrátor (${adminName}) véglegesen jóváhagyta.\nA nap 24 órára megnyílt a rögzítéshez!`;
+      const untilTxt = formatExpiryHu(expiryById[req.id]) || 'a következő munkanapod végéig';
+      const body = `Szia ${targetName}!\n\nA(z) ${reqDate} napra vonatkozó pótlási kérelmedet az Adminisztrátor (${adminName}) véglegesen jóváhagyta.\nA nap megnyílt a rögzítéshez, ${untilTxt} pótolhatod.`;
       
       sendAutomatedEmail(targetEmail, subject, body);
     }
@@ -5790,7 +5821,13 @@ async function exportRequestsToCsv() {
       let statusLabel = rawStatus;
       if (rawStatus === 'approved') statusLabel = 'Jóváhagyva';
       else if (rawStatus === 'rejected') statusLabel = 'Elutasítva';
-      else if (rawStatus.includes('pending') || rawStatus.includes('fugg')) statusLabel = 'Függőben';
+      else if (rawStatus === 'pending_level1') {
+        // Még a felettesnél: a jóváhagyó neve is látszódjon
+        const apprEmail = cleanEmail(String(r.approver_email || '').replace(/"/g, '').split(',')[0]);
+        const appr = (window.pnAllProfiles || []).find(p => cleanEmail(p.email) === apprEmail);
+        statusLabel = `Felettesnél – ${appr ? appr.nev : (apprEmail || 'ismeretlen')}`;
+      }
+      else if (rawStatus.includes('pending') || rawStatus.includes('fugg')) statusLabel = 'Admin véglegesítésre vár';
 
       const comment = (r.approver_comment || '').trim();
       let type = "Normál / Ismeretlen";
@@ -6310,12 +6347,12 @@ function getNextApproverEmail(profile) {
           approver_email: myEmail,
           status: 'approved',
           approver_comment: `${currentUserProfile.nev}: Automatikus jóváhagyás (boss kérelme)`,
-          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          expires_at: jsRequestExpiryIso(myEmail), // az adatbázis felülírja a pontos értékkel
           approved_at: nowIso
         }]);
       if (bossErr) throw bossErr;
 
-      showModal(`A(z) <strong>${targetDate}</strong> nap 24 órára megnyílt a rögzítéshez.`, "Siker");
+      showModal(`A(z) <strong>${targetDate}</strong> nap megnyílt a rögzítéshez, ${formatExpiryHu(jsRequestExpiryIso(myEmail))}.`, "Siker");
       if (typeof updateJobList === 'function') updateJobList();
       return;
     }
@@ -6547,21 +6584,23 @@ async function processApproval(requestId, action) {
       sendAutomatedEmail(req.user_email, subject, bodyText, htmlBodyText).catch(e => console.warn(e));
 
     } else if (isFinalApprover) {
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-      const { error } = await supabaseClient
+      // A lejáratot az adatbázis számolja (munkanapokban, a távolléteket is figyelembe véve)
+      const { data: savedRows, error } = await supabaseClient
         .from('requests')
         .update({
           status: 'approved',
           approver_comment: finalComment,
-          expires_at: expiresAt,
+          expires_at: jsRequestExpiryIso(req.user_email),
           approved_at: new Date().toISOString()
         })
-        .eq('id', requestId);
+        .eq('id', requestId)
+        .select('expires_at');
 
       if (error) throw error;
+      const untilText = formatExpiryHu(savedRows && savedRows[0] ? savedRows[0].expires_at : null) || 'a következő munkanapja végéig';
 
       closeModal();
-      showModal(`A(z) ${req.datum} nap megnyitva 24 órára ${req.nev} részére!`, "Siker");
+      showModal(`A(z) ${req.datum} nap megnyitva ${req.nev} részére, rögzíthet: <strong>${untilText}</strong>.`, "Siker");
 
       const cleanDisplayComment = finalComment
         .replace('[BÜNTETÉSES NYITÁS]', '')
@@ -6570,12 +6609,12 @@ async function processApproval(requestId, action) {
         .trim();
 
       const subject = `Pótlási kérelem elfogadva - ${req.datum}`;
-      const bodyText = `Szia ${req.nev}!\n\nA(z) ${req.datum} napra vonatkozó pótlási kérelmedet véglegesen jóváhagytuk.\nA nap 24 órára megnyílt a rögzítéshez!`;
+      const bodyText = `Szia ${req.nev}!\n\nA(z) ${req.datum} napra vonatkozó pótlási kérelmedet véglegesen jóváhagytuk.\nA nap megnyílt a rögzítéshez, ${untilText} pótolhatod.`;
       const htmlBodyText = `
         <div style="font-family: Arial, sans-serif; max-width: 500px; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
           <h3 style="color: #16a34a; margin-top: 0; font-size: 16px;">Kérelem jóváhagyva 🔓</h3>
           <p style="font-size: 14px; color: #4a4a4a;">Szia <strong>${escapeHtml(req.nev)}</strong>!</p>
-          <p style="font-size: 14px; color: #4a4a4a;">A(z) <strong>${req.datum}</strong> napra vonatkozó pótlási kérelmedet véglegesen jóváhagytuk. A nap 24 órára megnyílt a rögzítéshez.</p>
+          <p style="font-size: 14px; color: #4a4a4a;">A(z) <strong>${req.datum}</strong> napra vonatkozó pótlási kérelmedet véglegesen jóváhagytuk. A nap megnyílt a rögzítéshez, <strong>${untilText}</strong> pótolhatod.</p>
           ${cleanDisplayComment ? `<div style="background-color: #f8fafc; padding: 12px; border-left: 4px solid #16a34a; margin: 15px 0; font-style: italic; font-size: 13px; color: #333333;">"Megjegyzés: ${escapeHtml(cleanDisplayComment)}"</div>` : ''}
         </div>`;
 
