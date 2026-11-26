@@ -734,6 +734,18 @@
         <button class="btn btn-warning fw-bold text-dark" onclick="exportRequestsToCsv()" id="exportRequestsBtn">Kérelmek letöltése (CSV)</button>
       </div>
     </div>
+    <!-- MEGTEKINTÉS ÍGY (csak admin jogkör) -->
+    <div class="card p-3 border-0 bg-light mt-4" id="viewAsWrap" style="display:none;">
+      <label class="form-label small fw-bold mb-1" for="viewAsSelect"><i class="bi bi-eye me-1"></i> Megtekintés így</label>
+      <div class="d-flex gap-2">
+        <select class="form-select form-select-sm" id="viewAsSelect"></select>
+        <button type="button" class="btn btn-outline-dark btn-sm fw-bold text-nowrap" onclick="startViewAs()">
+          <i class="bi bi-eye me-1"></i> Megnyitás
+        </button>
+      </div>
+      <small class="text-muted d-block mt-1" style="font-size:0.72rem;">Csak olvasható nézet a kiválasztott munkatárs szemével: semmit nem lehet módosítani, e-mail nem megy ki. Minden megnyitás és kilépés naplózva.</small>
+    </div>
+
     <!-- MINDENKI FRISSÍTÉSE (közös a Távollét Kezelővel) -->
     <div class="card p-3 border-0 bg-light mt-4" id="forceReloadAllWrap" style="display:none;">
       <button type="button" class="btn btn-outline-warning text-dark w-100 btn-sm fw-bold" id="forceReloadAllBtn" onclick="forceAllClientsReload()">
@@ -991,6 +1003,97 @@
   const SUPABASE_ANON_KEY = "sb_publishable_Nf-XecuiQns2q7Olnu_VIw_kA78NBZS";
   const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+  // =====================================================================
+  // 🛡️ ADATBÁZIS-BURKOLÓ (a Távollét Kezelővel azonos működés)
+  // 1. Rendszerfiók (profiles.rendszerfiok = true): a profil-LISTÁKBÓL mindenhol kimarad.
+  //    Egy profil lekérése (.single / .maybeSingle) változatlan.
+  //    Teljes lista (rendszerfiókkal együtt): supabaseClient.fromAllProfiles()
+  // 2. "Megtekintés így" mód: insert / update / upsert / delete tiltva,
+  //    RPC-ből csak az olvasó get_* és admin_* futhat.
+  // =====================================================================
+  window.pnSystemEmails = new Set();
+  window.viewAsMode = false;
+  window.realUserProfile = null;
+  const VIEW_AS_BLOCK_MSG = 'Megtekintés módban nem lehet módosítani.';
+
+  const __rawFrom = supabaseClient.from.bind(supabaseClient);
+  const __rawRpc = supabaseClient.rpc.bind(supabaseClient);
+
+  function isSystemProfileRow(r) {
+    if (!r || typeof r !== 'object') return false;
+    if (r.rendszerfiok === true) return true;
+    const e = String(r.email || '').trim().toLowerCase();
+    return !!e && window.pnSystemEmails.has(e);
+  }
+
+  // Láncolható "hamis" lekérdezés, ami mindig hibával tér vissza (megtekintés módban)
+  function viewAsBlockedQuery() {
+    const res = { data: null, error: { message: VIEW_AS_BLOCK_MSG, code: 'VIEW_ONLY' }, status: 403 };
+    const p = new Proxy(function () {}, {
+      get: (_, k) => {
+        if (k === 'then') return (onF, onR) => Promise.resolve(res).then(onF, onR);
+        if (k === 'catch' || k === 'finally') return (f) => Promise.resolve(res)[k](f);
+        return () => p;
+      },
+      apply: () => p
+    });
+    return p;
+  }
+
+  // A profil-lekérdezés eredményéből (tömb) kiszűri a rendszerfiókot
+  function wrapProfileFilter(builder) {
+    return new Proxy(builder, {
+      get(t, k) {
+        if (k === 'then') {
+          return (onF, onR) => t.then(res => {
+            if (res && Array.isArray(res.data)) res = { ...res, data: res.data.filter(r => !isSystemProfileRow(r)) };
+            return res;
+          }).then(onF, onR);
+        }
+        const v = t[k];
+        if (typeof v === 'function') {
+          return (...a) => {
+            const out = v.apply(t, a);
+            return (out && typeof out.then === 'function') ? wrapProfileFilter(out) : out;
+          };
+        }
+        return v;
+      }
+    });
+  }
+
+  supabaseClient.from = function (table) {
+    const qb = __rawFrom(table);
+    const isProfiles = table === 'profiles';
+    return new Proxy(qb, {
+      get(t, k) {
+        if (window.viewAsMode && ['insert', 'update', 'upsert', 'delete'].includes(k)) {
+          return () => viewAsBlockedQuery();
+        }
+        if (isProfiles && k === 'select') return (...a) => wrapProfileFilter(t.select(...a));
+        const v = t[k];
+        return typeof v === 'function' ? v.bind(t) : v;
+      }
+    });
+  };
+
+  // Minden profil, a rendszerfiókkal együtt (belépés, egyedi lekérések)
+  supabaseClient.fromAllProfiles = function () {
+    const qb = __rawFrom('profiles');
+    return new Proxy(qb, {
+      get(t, k) {
+        if (window.viewAsMode && ['insert', 'update', 'upsert', 'delete'].includes(k)) return () => viewAsBlockedQuery();
+        const v = t[k];
+        return typeof v === 'function' ? v.bind(t) : v;
+      }
+    });
+  };
+
+  supabaseClient.rpc = function (fn, args, opts) {
+    if (window.viewAsMode && !/^(get_|admin_)/.test(String(fn || ''))) return viewAsBlockedQuery();
+    return __rawRpc(fn, args, opts);
+  };
+
   let currentUserProfile = null;
   let userStaticData = {};
   let allMasterProjects = [];
@@ -1183,9 +1286,15 @@
     return (window.pnAllProfiles || []).find(p => pnNorm(p.email) === e) || null;
   }
 
-  // Kreatív ráfordítás statisztika: admin, illetve account vagy kreatív csapat vezetője (csoportvezető, leader, manager)
+  // 👁 "Teljes betekintés" egyedi fül: minden munkatárs órái, statisztikák, nyitási kérelmek OLVASÁSA
+  // (nem ad adminjogot, lezárást, végleges jóváhagyást, más órájának módosítását)
+  function hasFullView(p) {
+    return /betekint/.test(pnNorm(p?.latott_fulek || ''));
+  }
+
+  // Kreatív ráfordítás statisztika: admin, teljes betekintés, illetve account vagy kreatív csapat vezetője
   function canSeeCreativeStats(p) {
-    if (roleOf(p) === 'admin') return true;
+    if (roleOf(p) === 'admin' || hasFullView(p)) return true;
     if (!isLeaderTier(p)) return false;
     const acc = typeof getUserAccountGroupCode === 'function' ? getUserAccountGroupCode(p) : 'ALL';
     return acc !== 'ALL' || (typeof isCreativeTeamUser === 'function' && isCreativeTeamUser(p));
@@ -1445,6 +1554,63 @@
     sgCheckVersion();
   }
 
+  // =====================================================================
+  // 👁 MEGTEKINTÉS ÍGY (csak admin jogkör)
+  // A munkatárs profiljával, csak olvasható módban épül fel a felület.
+  // Napló: admin_nezet_naplo (megnyitás / kilépés), alkalmazas = 'Projektnyilvántartás'
+  // =====================================================================
+  function populateViewAsSelect() {
+    const sel = document.getElementById('viewAsSelect');
+    if (!sel || sel.options.length) return;
+    const me = cleanEmail(currentUserProfile?.email);
+    const list = (window.pnAllProfiles || [])
+      .filter(p => !isInactiveProfile(p) && cleanEmail(p.email) !== me && !isSystemProfileRow(p))
+      .sort((a, b) => String(a.nev || '').localeCompare(String(b.nev || ''), 'hu'));
+    sel.innerHTML = '<option value="">— válassz munkatársat —</option>' +
+      list.map(p => `<option value="${escapeHtml(cleanEmail(p.email))}">${escapeHtml(p.nev || p.email)}${p.jogosultsag ? ' (' + escapeHtml(p.jogosultsag) + ')' : ''}</option>`).join('');
+  }
+
+  async function logViewAs(esemeny, target) {
+    const row = { cel_email: cleanEmail(target?.email), cel_nev: target?.nev || '', esemeny, alkalmazas: 'Projektnyilvántartás' };
+    try {
+      let { error } = await __rawFrom('admin_nezet_naplo').insert([row]);
+      if (error && /alkalmazas/i.test(error.message || '')) { // ha az oszlop még nincs felvéve
+        delete row.alkalmazas;
+        ({ error } = await __rawFrom('admin_nezet_naplo').insert([row]));
+      }
+      if (error) console.warn('Megtekintés-napló hiba:', error.message);
+    } catch (e) { console.warn('Megtekintés-napló hiba:', e); }
+  }
+
+  async function startViewAs() {
+    if (roleOf(currentUserProfile) !== 'admin' || window.viewAsMode) return showModal("Ehhez admin jogkör szükséges.", "Hiba");
+    const email = document.getElementById('viewAsSelect')?.value || '';
+    const target = (window.pnAllProfiles || []).find(p => cleanEmail(p.email) === email);
+    if (!target) return showModal("Válassz munkatársat!", "Hiba");
+    await logViewAs('megnyitas', target);
+    try { sessionStorage.setItem('pn_viewAs', email); } catch (e) { }
+    window.location.href = window.location.href.split('#')[0].split('?')[0];
+  }
+
+  async function exitViewAs() {
+    const target = currentUserProfile;
+    await logViewAs('kilepes', target);
+    window.location.href = window.location.href.split('#')[0].split('?')[0];
+  }
+
+  function showViewAsBanner(target) {
+    const bar = document.createElement('div');
+    bar.id = 'viewAsBanner';
+    bar.className = 'bg-warning text-dark shadow d-flex flex-wrap align-items-center justify-content-center gap-2 px-3 py-2';
+    bar.style.cssText = 'position: sticky; top: 0; z-index: 10095; font-size: 0.85rem;';
+    bar.innerHTML = `
+      <i class="bi bi-eye-fill"></i>
+      <strong>${escapeHtml(target.nev || target.email)} nézete – csak megtekintés</strong>
+      <span class="small" style="opacity:0.8;">(az adatbázis közben a te jogosultságoddal olvas, ezért helyenként több adat is látszhat)</span>
+      <button type="button" class="btn btn-dark btn-sm fw-bold" onclick="exitViewAs()"><i class="bi bi-box-arrow-left me-1"></i>Kilépés</button>`;
+    document.body.insertBefore(bar, document.body.firstChild); // felül, görgetéskor is látszik
+  }
+
   // Admin: minden nyitott Távollét Kezelő és Projektnyilvántartás ablak frissítése
   async function forceAllClientsReload() {
     const btn = document.getElementById('forceReloadAllBtn');
@@ -1534,13 +1700,32 @@
       }
       const userEmail = cleanEmail(session.user.email);
 
-      const { data: profiles, error: profileError } = await supabaseClient
-        .from('profiles')
+      // Teljes lista (a rendszerfiókkal együtt), hogy a rendszerfiók is be tudjon lépni
+      const { data: allProfilesWithSystem, error: profileError } = await supabaseClient
+        .fromAllProfiles()
         .select('*');
 
       if (profileError) throw profileError;
 
-      const profile = (profiles || []).find(p => cleanEmail(p.email) === userEmail);
+      window.pnSystemEmails = new Set((allProfilesWithSystem || [])
+        .filter(p => p.rendszerfiok === true)
+        .map(p => cleanEmail(p.email)));
+      const profiles = (allProfilesWithSystem || []).filter(p => !isSystemProfileRow(p));
+
+      let profile = (allProfilesWithSystem || []).find(p => cleanEmail(p.email) === userEmail);
+
+      // 👁 "Megtekintés így" mód: egyszeri jelzés az oldal-újratöltéshez (frissítéskor a mód megszűnik)
+      let viewAsTargetEmail = '';
+      try { viewAsTargetEmail = sessionStorage.getItem('pn_viewAs') || ''; sessionStorage.removeItem('pn_viewAs'); } catch (e) { }
+      if (profile && viewAsTargetEmail && roleOf(profile) === 'admin') {
+        const target = profiles.find(p => cleanEmail(p.email) === cleanEmail(viewAsTargetEmail));
+        if (target && cleanEmail(target.email) !== userEmail) {
+          window.realUserProfile = profile;
+          window.viewAsMode = true;
+          profile = target;
+          showViewAsBanner(target);
+        }
+      }
 
       if (!profile) {
         document.body.innerHTML = `
@@ -3734,8 +3919,14 @@ function populateStatYearSelect() {
     return b;
   }
 
-  function getSupervisedProfilesForUser(allProfiles, currentProfile, includeSelf = true) {
+  function getSupervisedProfilesForUser(allProfiles, currentProfile, includeSelf = true, ignoreFullView = false) {
   if (!currentProfile || !Array.isArray(allProfiles)) return [];
+
+  // 👁 Teljes betekintés: minden munkatárs látszik (csak olvasásra)
+  if (!ignoreFullView && hasFullView(currentProfile) && roleOf(currentProfile) !== 'admin') {
+    const me0 = String(currentProfile.email || '').replace(/"/g, '').trim().toLowerCase();
+    return includeSelf ? allProfiles : allProfiles.filter(p => String(p.email || '').replace(/"/g, '').trim().toLowerCase() !== me0);
+  }
 
   // 👑 Admin mindenkit lát; 👔 a boss csak a hozzá tartozó vezetőket (csoportvezető, leader, manager)
   const __role = roleOf(currentProfile);
@@ -4520,7 +4711,15 @@ async function checkMissingRecords(evt) {
         }
       });
 
-      lastMissingReportForEmail = missingReport;
+      // 👁 Teljes betekintés: emlékeztetőt csak a saját csapatának küldhet, a többieket csak látja
+      let ownTeamEmails = null;
+      if (hasFullView(prof) && roleOf(prof) !== 'admin') {
+        ownTeamEmails = new Set(getSupervisedProfilesForUser(allProfiles, prof, false, true).map(p => cleanEmail(p.email)));
+      }
+      const canRemind = (email) => !ownTeamEmails || ownTeamEmails.has(cleanEmail(email));
+
+      lastMissingReportForEmail = {};
+      Object.keys(missingReport).forEach(k => { if (canRemind(missingReport[k].email)) lastMissingReportForEmail[k] = missingReport[k]; });
 
       // 🎯 MAI HELYI DÁTUM (YYYY-MM-DD)
       const now = new Date();
@@ -4550,9 +4749,9 @@ async function checkMissingRecords(evt) {
                 <p class="small mb-1 fw-bold">${safeName}</p>
                 <div class="d-flex flex-wrap">${tags}</div>
               </div>
-              <button data-email="${safeEmail}" class="btn btn-sm ${btnClass}" title="${titleText}" onclick="sendReminder('${safeName.replace(/'/g, "\\'")}', '${safeEmail}', this)" ${btnDisabled}>
+              ${canRemind(userObj.email) ? `<button data-email="${safeEmail}" class="btn btn-sm ${btnClass}" title="${titleText}" onclick="sendReminder('${safeName.replace(/'/g, "\\'")}', '${safeEmail}', this)" ${btnDisabled}>
                 <i class="bi ${iconClass}"></i>
-              </button>
+              </button>` : `<span class="badge bg-light text-muted border" style="font-size:0.65rem;">Csak betekintés</span>`}
             </div>
           </div>`;
       }
@@ -4564,7 +4763,7 @@ async function checkMissingRecords(evt) {
         if (allRemBtn) allRemBtn.style.display = 'none';
       } else {
         area.innerHTML = `<div class="alert alert-danger py-2 mb-3 small">A(z) <strong>${monthVal}</strong> hónapban (${timeSpanText}) <strong>${count}</strong> munkatársnak van hiányzó rögzítése.</div>` + html;
-        if (allRemBtn) allRemBtn.style.display = 'inline-block';
+        if (allRemBtn) allRemBtn.style.display = Object.keys(lastMissingReportForEmail).length ? 'inline-block' : 'none';
       }
     } catch (err) {
       console.error("Hiányzók ellenőrzési hiba:", err);
@@ -5111,6 +5310,23 @@ async function executeSendAllReminders() {
         console.warn('Helyettesített kérelmek lekérési hiba:', subErr);
       }
 
+      // 👁 Teljes betekintés: minden függő kérelem látszik, amit nem ő bírál el, az gombok nélkül
+      if (hasFullView(currentUserProfile) && !isAdmin) {
+        try {
+          const { data: allPending } = await supabaseClient
+            .from('requests')
+            .select('*')
+            .in('status', ['pending_level1', 'pending_admin', 'pending', 'Függőben'])
+            .order('created_at', { ascending: false });
+          const seenIds = new Set(leaderReqs.map(r => r.id));
+          (allPending || []).forEach(r => {
+            if (seenIds.has(r.id) || cleanEmail(r.user_email) === userEmail) return;
+            r._readOnly = true;
+            leaderReqs.push(r);
+          });
+        } catch (fvErr) { console.warn('Betekintési lista hiba:', fvErr); }
+      }
+
       // Inaktív / kilépett munkatársak kérelmei nem jelennek meg
       leaderReqs = leaderReqs.filter(r => !window.inactiveEmails.has(pnNorm(r.user_email)));
 
@@ -5125,9 +5341,12 @@ async function executeSendAllReminders() {
             <td data-label="Dátum"><span class="badge bg-info text-dark">${escapeHtml(r.datum)}</span></td>
             <td data-label="Indok"><em>"${escapeHtml(r.indoklas || '')}"</em></td>
             <td data-label="Művelet" class="text-center">
-              <button class="btn btn-sm btn-outline-primary fw-bold py-0" onclick="openApprovalModal('${r.id}')">
+              ${r._readOnly
+                ? `<span class="badge bg-light text-muted border" title="${escapeHtml(r.approver_email || '')} bírálja el">Csak betekintés</span>
+                   <div class="text-muted" style="font-size:0.65rem;">${String(r.status).includes('admin') ? 'Admin véglegesítésre vár' : 'Felettesnél'}</div>`
+                : `<button class="btn btn-sm btn-outline-primary fw-bold py-0" onclick="openApprovalModal('${r.id}')">
                 <i class="bi bi-pencil me-1"></i> Elbírálás
-              </button>
+              </button>`}
             </td>
           </tr>
         `).join('');
@@ -6191,6 +6410,7 @@ async function processApproval(requestId, action) {
 }
 
   async function sendAutomatedEmail(toEmail, subject, bodyText, htmlBodyText) {
+  if (window.viewAsMode) { console.info('[Megtekintés mód] e-mail nem ment ki:', subject); return; }
   const GAS_EMAIL_URL = "https://script.google.com/macros/s/AKfycbycePikT3E6hcNMp-hoA_fQI5UxRr5fdY2sizyGOZM5W44mkfWlnMLC8mHuHjF9YQ/exec";
   const SECRET_TOKEN = "SPICE_HR_PORTAL_SECRET_TOKEN_2026";
 
@@ -6229,9 +6449,10 @@ async function processApproval(requestId, action) {
     const cleanRole = roleOf(profile);
     const isLeaderRole = ['manager', 'leader', 'csoportvezeto', 'admin', 'boss'].includes(cleanRole);
 
-    const canSeeTeam = isLeaderRole;
-    const canSeeTeamStat = isLeaderRole;
-    const canSeeApp = isLeaderRole;
+    const fullView = hasFullView(profile); // 👁 Teljes betekintés: csak olvasás
+    const canSeeTeam = isLeaderRole || fullView;
+    const canSeeTeamStat = isLeaderRole || fullView;
+    const canSeeApp = isLeaderRole || fullView;
     // Admin fül: admin jogkör, vagy "Projekt Admin" az egyedi látható fülek között
     const canSeeAdmin = isPnAdmin(profile);
 
@@ -6266,9 +6487,14 @@ async function processApproval(requestId, action) {
     const mbAdm = document.getElementById('mbTabAdm');
     if (mbAdm) mbAdm.style.setProperty('display', canSeeAdmin ? '' : 'none', 'important');
 
-    // "Mindenki frissítése" csak teljes jogú adminnak
+    // "Mindenki frissítése" és "Megtekintés így" csak teljes jogú adminnak (megtekintés módban nem)
     const frWrap = document.getElementById('forceReloadAllWrap');
-    if (frWrap) frWrap.style.display = cleanRole === 'admin' ? '' : 'none';
+    if (frWrap) frWrap.style.display = cleanRole === 'admin' && !window.viewAsMode ? '' : 'none';
+    const vaWrap = document.getElementById('viewAsWrap');
+    if (vaWrap) {
+      vaWrap.style.display = cleanRole === 'admin' && !window.viewAsMode ? '' : 'none';
+      if (cleanRole === 'admin' && !window.viewAsMode) populateViewAsSelect();
+    }
 
     if (!canSeeAdmin && !canSeeTeam && !canSeeApp) {
       if (typeof switchTab === 'function') switchTab('rec-tab');

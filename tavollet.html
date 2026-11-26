@@ -1111,6 +1111,78 @@
   }
 }
 </style>
+<style>
+/* =========================================================
+   MOBIL KÁRTYANÉZET JAVÍTÁSA (2026-11-26)
+   ========================================================= */
+@media screen and (max-width: 768px) {
+  /* Alsó menü: a feliratok ne törjenek két sorba */
+  .app-nav-item { font-size: 0.6rem !important; min-width: 0 !important; padding: 0 1px; }
+  .app-nav-item span { display: block; max-width: 100%; white-space: nowrap !important; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.01em; }
+  .app-nav-item i { font-size: 1.15rem !important; }
+
+  /* Nincs görgetősáv a görgetősávban: a listák a lappal együtt görögnek */
+  .table-responsive.admin-users-scroll,
+  .table-responsive[style*="max-height"]:not(.payroll-scroll):not(.matrix-container):not(.gantt-scroll-wrapper) {
+    max-height: none !important;
+    overflow: visible !important;
+    border: none !important;
+  }
+
+  /* Kártya-sor: címke balra, érték jobbra, hosszú érték tördelődik */
+  .table-responsive:not(.gantt-scroll-wrapper):not(.payroll-scroll):not(.matrix-container) td {
+    min-width: 0 !important;
+    max-width: none !important;
+    white-space: normal !important;
+    gap: 10px;
+  }
+  .table-responsive:not(.gantt-scroll-wrapper):not(.payroll-scroll):not(.matrix-container) td::before {
+    white-space: normal !important;
+    max-width: 42%;
+    margin-right: 0 !important;
+  }
+  .table-responsive:not(.gantt-scroll-wrapper):not(.payroll-scroll):not(.matrix-container) td > .m-val {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    text-align: right;
+    gap: 2px;
+    overflow-wrap: anywhere;
+  }
+  .table-responsive:not(.gantt-scroll-wrapper):not(.payroll-scroll):not(.matrix-container) td > .m-val > * { max-width: 100%; }
+  .table-responsive:not(.gantt-scroll-wrapper):not(.payroll-scroll):not(.matrix-container) td > .m-val .text-truncate,
+  .admin-users-table .admin-email,
+  .admin-users-table .admin-mgr { max-width: 100% !important; }
+  .table-responsive:not(.gantt-scroll-wrapper):not(.payroll-scroll):not(.matrix-container) td > .m-val .btn { white-space: nowrap; }
+  /* Művelet-gombok egymás mellett */
+  .table-responsive:not(.gantt-scroll-wrapper):not(.payroll-scroll):not(.matrix-container) td.m-actions > .m-val {
+    flex-direction: row; flex-wrap: wrap; justify-content: flex-end; gap: 6px;
+  }
+
+  /* A kártya fejléce: a munkatárs neve (címke nélkül, kiemelve) */
+  .table-responsive:not(.gantt-scroll-wrapper):not(.payroll-scroll):not(.matrix-container) td.m-head {
+    background: #f8fafc !important;
+    border-radius: 10px !important;
+    padding: 8px 10px !important;
+    margin-bottom: 4px;
+    border-bottom: none !important;
+  }
+  .table-responsive:not(.gantt-scroll-wrapper):not(.payroll-scroll):not(.matrix-container) td.m-head::before { display: none !important; }
+  .table-responsive:not(.gantt-scroll-wrapper):not(.payroll-scroll):not(.matrix-container) td.m-head > .m-val {
+    align-items: flex-start; text-align: left; font-weight: 700; font-size: 0.95rem;
+  }
+
+  /* Büdzsé-kártya fejléce: a gombok ne lógjanak ki */
+  #overtimeBudgetsCard .card-header .d-flex.align-items-center.gap-2 { flex-wrap: wrap; }
+  #overtimeBudgetsCard .card-header .btn { white-space: normal !important; }
+
+  /* Admin alfülek: vízszintesen görgethető sáv */
+  .admin-subnav { flex-wrap: nowrap !important; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .admin-subnav::-webkit-scrollbar { display: none; }
+}
+</style>
 </head>
 <body>
 
@@ -3063,6 +3135,87 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
+
+// =========================================================
+// MOBIL KÁRTYANÉZET: hiányzó oszlopcímkék pótlása a táblázat fejlécéből,
+// a cellatartalom egy blokkba fogása (2026-11-26)
+// =========================================================
+(function () {
+  const MQ = window.matchMedia('(max-width: 768px)');
+  const HEAD_LABELS = ['munkatárs', 'név', 'dolgozó'];
+  function headerLabels(table) {
+    const thead = table.tHead;
+    if (!thead) return [];
+    const grid = [];
+    [...thead.rows].forEach((row, ri) => {
+      grid[ri] = grid[ri] || [];
+      let ci = 0;
+      [...row.cells].forEach(cell => {
+        while (grid[ri][ci] !== undefined) ci++;
+        const txt = (cell.innerText || cell.textContent || '').replace(/\s+/g, ' ').trim();
+        const cs = cell.colSpan || 1, rs = cell.rowSpan || 1;
+        for (let r = 0; r < rs; r++) {
+          grid[ri + r] = grid[ri + r] || [];
+          for (let c = 0; c < cs; c++) grid[ri + r][ci + c] = { txt, span: cs };
+        }
+        ci += cs;
+      });
+    });
+    const cols = Math.max(0, ...grid.map(r => r.length));
+    const out = [];
+    for (let c = 0; c < cols; c++) {
+      // az oszlop legalsó, nem üres fejléc-cellájának szövege
+      let label = '';
+      for (let r = grid.length - 1; r >= 0; r--) {
+        const g = grid[r] && grid[r][c];
+        if (g && g.txt) { label = g.txt; break; }
+      }
+      out.push(label);
+    }
+    return out;
+  }
+  function processTable(table) {
+    const wrap = table.closest('.table-responsive');
+    if (!wrap || wrap.matches('.gantt-scroll-wrapper, .payroll-scroll, .matrix-container')) return;
+    let labels = null;
+    [...table.tBodies].forEach(tb => [...tb.rows].forEach(tr => {
+      let ci = 0;
+      [...tr.cells].forEach((td, idx) => {
+        const cs = td.colSpan || 1;
+        if (cs === 1 && td.tagName === 'TD') {
+          if (!td.hasAttribute('data-label')) {
+            if (labels === null) labels = headerLabels(table);
+            if (labels[ci]) td.setAttribute('data-label', labels[ci]);
+          }
+          const wrapped = td.childNodes.length === 1 && td.firstElementChild && td.firstElementChild.classList.contains('m-val');
+          if (!wrapped && td.childNodes.length) {
+            const box = document.createElement('div');
+            box.className = 'm-val';
+            while (td.firstChild) box.appendChild(td.firstChild);
+            td.appendChild(box);
+            const lbl = String(td.getAttribute('data-label') || '').toLowerCase();
+            if (idx === 0 && HEAD_LABELS.some(h => lbl.startsWith(h))) td.classList.add('m-head');
+            if (lbl.startsWith('művelet') || box.querySelectorAll('.btn').length > 1) td.classList.add('m-actions');
+          }
+        }
+        ci += cs;
+      });
+    }));
+  }
+  let pending = false;
+  function run() {
+    pending = false;
+    if (!MQ.matches) return;
+    document.querySelectorAll('.table-responsive table').forEach(t => { try { processTable(t); } catch (e) { /* egy táblázat hibája ne állítsa meg a többit */ } });
+  }
+  function schedule() { if (!pending) { pending = true; requestAnimationFrame(run); } }
+  function start() {
+    new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+    schedule();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+  if (MQ.addEventListener) MQ.addEventListener('change', schedule);
+})();
   const SUPABASE_URL = "https://gyfiwdhmhjaewwewxede.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_Nf-XecuiQns2q7Olnu_VIw_kA78NBZS";
   const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
