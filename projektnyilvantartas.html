@@ -776,7 +776,7 @@
             <label class="form-label small fw-bold mb-1" for="exportMonthSelect">Havi munkaidő-összesítő</label>
             <div class="input-group input-group-sm">
               <select class="form-select" id="exportMonthSelect"></select>
-              <button class="btn btn-primary fw-bold" onclick="runExport()" id="exportCsvBtn"><i class="bi bi-file-earmark-arrow-down me-1"></i>Letöltés</button>
+              <button class="btn btn-primary fw-bold" onclick="runExport()" id="exportCsvBtn"><i class="bi bi-file-earmark-excel me-1"></i>Letöltés (Excel)</button>
             </div>
             <small class="text-muted adm-hint">Csak lezárt hónap választható.</small>
           </div>
@@ -785,7 +785,7 @@
             <label class="form-label small fw-bold mb-1" for="exportRequestsMonth">Nyitási kérelmek és döntések</label>
             <div class="input-group input-group-sm">
               <input type="month" class="form-control" id="exportRequestsMonth">
-              <button class="btn btn-primary fw-bold" onclick="exportRequestsToCsv()" id="exportRequestsBtn"><i class="bi bi-file-earmark-arrow-down me-1"></i>Letöltés (CSV)</button>
+              <button class="btn btn-primary fw-bold" onclick="exportRequestsToCsv()" id="exportRequestsBtn"><i class="bi bi-file-earmark-excel me-1"></i>Letöltés (Excel)</button>
             </div>
             <small class="text-muted adm-hint">A kiválasztott hónap összes kérelme a döntésekkel.</small>
           </div>
@@ -3189,7 +3189,7 @@ function clientReportCsvRows(r) {
 // 📗 FORMÁZOTT EXCEL (.xlsx) LETÖLTÉS – külső könyvtár nélkül
 // Kis XLSX-író: tömörítetlen ZIP + SpreadsheetML, stílusokkal
 // =====================================================================
-const XLSX_STYLE = { normal: 0, title: 1, subtitle: 2, header: 3, text: 4, num: 5, job: 6, totalText: 7, totalNum: 8, monthText: 9, grandText: 10, grandNum: 11 };
+const XLSX_STYLE = { normal: 0, title: 1, subtitle: 2, header: 3, text: 4, num: 5, job: 6, totalText: 7, totalNum: 8, monthText: 9, grandText: 10, grandNum: 11, ok: 12, bad: 13, pending: 14, center: 15 };
 
 function xlsxEsc(v) {
   return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -3224,28 +3224,34 @@ function xlsxSheetXml(sheet) {
   const merges = sheet.merges && sheet.merges.length
     ? `<mergeCells count="${sheet.merges.length}">${sheet.merges.map(m => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>` : '';
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>${pane}<sheetFormatPr defaultRowHeight="15"/>${cols}<sheetData>${rows}</sheetData>${merges}<pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/><pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>`;
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>${pane}<sheetFormatPr defaultRowHeight="15"/>${cols}<sheetData>${rows}</sheetData>${sheet.autoFilter ? `<autoFilter ref="${sheet.autoFilter}"/>` : ''}${merges}<pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/><pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>`;
 }
 
 function xlsxStylesXml() {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.00;-#,##0.00;&quot;–&quot;"/></numFmts>
-<fonts count="6">
+<fonts count="9">
   <font><sz val="10"/><name val="Arial"/></font>
   <font><b/><sz val="14"/><color rgb="FF0F172A"/><name val="Arial"/></font>
   <font><sz val="9"/><color rgb="FF64748B"/><name val="Arial"/></font>
   <font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="Arial"/></font>
   <font><b/><sz val="10"/><name val="Arial"/></font>
   <font><b/><sz val="10"/><color rgb="FF1E3A8A"/><name val="Arial"/></font>
+  <font><b/><sz val="10"/><color rgb="FF166534"/><name val="Arial"/></font>
+  <font><b/><sz val="10"/><color rgb="FFB91C1C"/><name val="Arial"/></font>
+  <font><b/><sz val="10"/><color rgb="FF92400E"/><name val="Arial"/></font>
 </fonts>
-<fills count="6">
+<fills count="9">
   <fill><patternFill patternType="none"/></fill>
   <fill><patternFill patternType="gray125"/></fill>
   <fill><patternFill patternType="solid"><fgColor rgb="FF1E40AF"/><bgColor indexed="64"/></patternFill></fill>
   <fill><patternFill patternType="solid"><fgColor rgb="FFE2E8F0"/><bgColor indexed="64"/></patternFill></fill>
   <fill><patternFill patternType="solid"><fgColor rgb="FFDBEAFE"/><bgColor indexed="64"/></patternFill></fill>
   <fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill>
+  <fill><patternFill patternType="solid"><fgColor rgb="FFDCFCE7"/><bgColor indexed="64"/></patternFill></fill>
+  <fill><patternFill patternType="solid"><fgColor rgb="FFFEE2E2"/><bgColor indexed="64"/></patternFill></fill>
+  <fill><patternFill patternType="solid"><fgColor rgb="FFFEF3C7"/><bgColor indexed="64"/></patternFill></fill>
 </fills>
 <borders count="3">
   <border><left/><right/><top/><bottom/><diagonal/></border>
@@ -3253,7 +3259,7 @@ function xlsxStylesXml() {
   <border><left style="thin"><color rgb="FF94A3B8"/></left><right style="thin"><color rgb="FF94A3B8"/></right><top style="medium"><color rgb="FF1E40AF"/></top><bottom style="medium"><color rgb="FF1E40AF"/></bottom><diagonal/></border>
 </borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="12">
+<cellXfs count="16">
   <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
   <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
   <xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>
@@ -3266,6 +3272,10 @@ function xlsxStylesXml() {
   <xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
   <xf numFmtId="0" fontId="5" fillId="4" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
   <xf numFmtId="164" fontId="5" fillId="4" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>
+  <xf numFmtId="0" fontId="6" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+  <xf numFmtId="0" fontId="7" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+  <xf numFmtId="0" fontId="8" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+  <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
@@ -3317,6 +3327,107 @@ function xlsxZip(files) {
   const count = Object.keys(files).length;
   const end = new Uint8Array([...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(count), ...u16(count), ...u32(cdSize), ...u32(offset), ...u16(0)]);
   return new Blob([...parts, ...central, end], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
+// Munkalapok letöltése .xlsx fájlként
+function downloadXlsxSheets(sheets, fileName) {
+  const blob = xlsxZip(xlsxWorkbookFiles(sheets));
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+}
+
+// Admin: havi munkaidő-összesítő -> Adatok (importbarát, fejléc az 1. sorban) + Munkaszámonként + Munkatársanként
+function buildMonthlyExportSheets(month, header, dataRows) {
+  const S = XLSX_STYLE;
+  const today = getLocalYMD().replace(/-/g, '.') + '.';
+  const oraIdx = header.indexOf('Óra');
+  const total = dataRows.reduce((a, r) => a + (Number(r[oraIdx]) || 0), 0);
+  const lastCol = xlsxColName(header.length - 1);
+
+  // 1. Adatok – soronként egy rögzítés, ugyanazokkal az oszlopokkal, mint eddig a CSV
+  const sorted = dataRows.slice().sort((a, b) =>
+    String(a[0]).localeCompare(String(b[0]), 'hu', { numeric: true }) ||
+    String(a[6]).localeCompare(String(b[6]), 'hu') ||
+    String(a[10]).localeCompare(String(b[10])));
+  const widths = { 'Munkaszám': 12, 'Munka neve': 40, 'Csoportkód': 12, 'Vevőkód': 18, 'Sztenderd/Ad-hoc': 14, 'Típus': 14, 'Név': 24, 'Pozíció': 24, 'Hónap': 10, 'Óra': 9, 'Dátum': 12 };
+  const data = { name: 'Adatok', cols: header.map(h => widths[h] || 14), rows: [], merges: [], freezeRow: 1, autoFilter: `A1:${lastCol}${sorted.length + 1}` };
+  data.rows.push({ cells: header.map(v => ({ v, s: S.header })), height: 22 });
+  sorted.forEach(r => data.rows.push({ cells: r.map((v, i) => ({
+    v, s: i === oraIdx ? S.num : (i === 0 ? S.job : (['Hónap', 'Dátum', 'Csoportkód'].includes(header[i]) ? S.center : S.text))
+  })) }));
+  data.rows.push({ cells: header.map((h, i) => i === 0 ? { v: 'Összesen', s: S.grandText } : (i === oraIdx ? { v: total, s: S.grandNum } : { v: '', s: S.grandText })) });
+
+  // 2. Munkaszámonként
+  const byJob = {};
+  dataRows.forEach(r => {
+    const k = String(r[0] || '–');
+    if (!byJob[k]) byJob[k] = { job: k, munka: r[1], vevo: r[3], csoport: r[2], ora: 0, fo: new Set() };
+    byJob[k].ora += Number(r[oraIdx]) || 0;
+    byJob[k].fo.add(r[6]);
+  });
+  const jobs = { name: 'Munkaszámonként', cols: [12, 44, 18, 12, 10, 12], rows: [], merges: ['A1:F1', 'A2:F2'], freezeRow: 4 };
+  jobs.rows.push({ cells: [{ v: `Havi munkaidő-összesítő – ${month} – munkaszámonként`, s: S.title }], height: 24 });
+  jobs.rows.push({ cells: [{ v: `Készült: ${today}  ·  ${Object.keys(byJob).length} munkaszám  ·  ${dataRows.length} rögzítés`, s: S.subtitle }] });
+  jobs.rows.push({ cells: [] });
+  jobs.rows.push({ cells: ['Munkaszám', 'Munka neve', 'Vevőkód', 'Csoportkód', 'Fő', 'Óra'].map(v => ({ v, s: S.header })), height: 22 });
+  Object.values(byJob).sort((a, b) => b.ora - a.ora).forEach(j => jobs.rows.push({ cells: [
+    { v: j.job, s: S.job }, { v: j.munka, s: S.text }, { v: j.vevo, s: S.text }, { v: j.csoport, s: S.center }, { v: j.fo.size, s: S.center }, { v: j.ora, s: S.num }
+  ] }));
+  jobs.rows.push({ cells: [{ v: 'Összesen', s: S.grandText }, { v: '', s: S.grandText }, { v: '', s: S.grandText }, { v: '', s: S.grandText }, { v: '', s: S.grandText }, { v: total, s: S.grandNum }], height: 20 });
+
+  // 3. Munkatársanként
+  const byPerson = {};
+  dataRows.forEach(r => {
+    const k = String(r[6] || '–');
+    if (!byPerson[k]) byPerson[k] = { nev: k, poz: r[7], ora: 0, jobs: new Set() };
+    byPerson[k].ora += Number(r[oraIdx]) || 0;
+    byPerson[k].jobs.add(r[0]);
+  });
+  const people = { name: 'Munkatársanként', cols: [28, 30, 12, 12], rows: [], merges: ['A1:D1', 'A2:D2'], freezeRow: 4 };
+  people.rows.push({ cells: [{ v: `Havi munkaidő-összesítő – ${month} – munkatársanként`, s: S.title }], height: 24 });
+  people.rows.push({ cells: [{ v: `Készült: ${today}  ·  ${Object.keys(byPerson).length} munkatárs`, s: S.subtitle }] });
+  people.rows.push({ cells: [] });
+  people.rows.push({ cells: ['Munkatárs', 'Pozíció', 'Munkaszám', 'Óra'].map(v => ({ v, s: S.header })), height: 22 });
+  Object.values(byPerson).sort((a, b) => a.nev.localeCompare(b.nev, 'hu')).forEach(p => people.rows.push({ cells: [
+    { v: p.nev, s: S.job }, { v: p.poz, s: S.text }, { v: p.jobs.size, s: S.center }, { v: p.ora, s: S.num }
+  ] }));
+  people.rows.push({ cells: [{ v: 'Összesen', s: S.grandText }, { v: '', s: S.grandText }, { v: '', s: S.grandText }, { v: total, s: S.grandNum }], height: 20 });
+
+  return [data, jobs, people];
+}
+
+// Admin: nyitási kérelmek és döntések -> egy munkalap, színezett státusszal
+function buildRequestsExportSheets(monthVal, header, dataRows) {
+  const S = XLSX_STYLE;
+  const today = getLocalYMD().replace(/-/g, '.') + '.';
+  const lastCol = xlsxColName(header.length - 1);
+  const idx = (h) => header.indexOf(h);
+  const iStatus = idx('Státusz'), iType = idx('Típus (Büntetéses/Büntetlen)'), iOra = idx('Igényelt óra');
+  const cnt = (f) => dataRows.filter(f).length;
+  const sub = `Készült: ${today}  ·  ${dataRows.length} kérelem  ·  jóváhagyva: ${cnt(r => r[iStatus] === 'Jóváhagyva')}`
+    + `  ·  elutasítva: ${cnt(r => r[iStatus] === 'Elutasítva')}  ·  függőben: ${cnt(r => r[iStatus] === 'Függőben')}`
+    + `  ·  büntetéses: ${cnt(r => r[iType] === 'BÜNTETÉSES')}`;
+  const widths = [24, 30, 12, 9, 12, 36, 13, 22, 20, 30, 21, 20, 30, 21, 21];
+  const sheet = { name: 'Nyitási kérelmek', cols: widths, rows: [], merges: [`A1:${lastCol}1`, `A2:${lastCol}2`], freezeRow: 4,
+                  autoFilter: `A4:${lastCol}${dataRows.length + 4}` };
+  sheet.rows.push({ cells: [{ v: `Nyitási kérelmek és döntések – ${monthVal}`, s: S.title }], height: 24 });
+  sheet.rows.push({ cells: [{ v: sub, s: S.subtitle }] });
+  sheet.rows.push({ cells: [] });
+  sheet.rows.push({ cells: header.map(v => ({ v, s: S.header })), height: 34 });
+  dataRows.forEach(r => sheet.rows.push({ cells: r.map((v, i) => {
+    if (i === iStatus) return { v, s: v === 'Jóváhagyva' ? S.ok : (v === 'Elutasítva' ? S.bad : S.pending) };
+    if (i === iType) return { v, s: v === 'BÜNTETÉSES' ? S.bad : (v === 'BÜNTETLEN' ? S.ok : S.center) };
+    if (i === iOra) return { v, s: S.num };
+    if (i === 0) return { v, s: S.job };
+    if ([2, 4, 10, 13, 14].includes(i)) return { v, s: S.center };
+    return { v, s: S.text };
+  }) }));
+  return [sheet];
 }
 
 // Ügyfél éves kimutatás -> két munkalap: Havi bontás, Éves összesítő
@@ -5638,7 +5749,7 @@ async function exportRequestsToCsv() {
       "Beküldés ideje"
     ];
     
-    let csvContent = "\uFEFF" + header.join(";") + "\r\n";
+    const dataRows = [];
 
     // 🎯 NÉV ÉS MEGJEGYZÉS SZÉTVÁLASZTÁSA (TÖMEGES ÉS EGYÉNI JÓVÁHAGYÁSOKRA IS)
     const parseCommentPart = (partStr) => {
@@ -5671,7 +5782,7 @@ async function exportRequestsToCsv() {
       const nev = r.nev || r.user_email || "";
       const email = r.user_email || "";
       const datum = r.datum || "";
-      const oraszam = (Number(r.oraszam) || 0).toString().replace('.', ',');
+      const oraszam = Number(r.oraszam) || 0;
       const munkaszam = r.munkaszam || "";
       const indoklas = r.indoklas || "";
 
@@ -5730,18 +5841,10 @@ async function exportRequestsToCsv() {
         leaderName, leaderComment, leaderApprovalTime, createdAt
       ];
 
-      let rowEscaped = rowValues.map(v => '"' + String(v || '').replace(/"/g, '""') + '"');
-      csvContent += rowEscaped.join(";") + "\r\n";
+      dataRows.push(rowValues.map(v => (typeof v === 'number' ? v : String(v || ''))));
     });
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    link.setAttribute("href", URL.createObjectURL(blob));
-    link.setAttribute("download", `Spice_Nyitasok_Riport_${monthVal}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadXlsxSheets(buildRequestsExportSheets(monthVal, header, dataRows), `Spice_Nyitasok_Riport_${monthVal}.xlsx`);
 
   } catch (err) {
     showModal("Hiba az exportálás során: " + err.message, "Hiba");
@@ -6032,7 +6135,7 @@ async function exportRequestsToCsv() {
     });
 
     const header = ["Munkaszám", "Munka neve", "Csoportkód", "Vevőkód", "Sztenderd/Ad-hoc", "Típus", "Név", "Pozíció", "Hónap", "Óra", "Dátum"];
-    let csvContent = "\uFEFF" + header.join(";") + "\r\n";
+    const dataRows = [];
 
     allLogs.forEach(row => {
       const rawMunkaszam = (row.munkaszam || '').toString().trim();
@@ -6076,7 +6179,7 @@ async function exportRequestsToCsv() {
       const nev = row.nev || prof.nev || email;
       const pozicio = row.pozicio || prof.pozicio || "";
       const honap = row.honap || month;
-      const ora = (Number(row.oraszam) || 0).toString().replace('.', ',');
+      const ora = Number(row.oraszam) || 0; // valódi szám az Excelben
       const datum = row.datum || "";
 
       const rowValues = [
@@ -6093,18 +6196,10 @@ async function exportRequestsToCsv() {
         datum
       ];
 
-      let rowEscaped = rowValues.map(v => '"' + String(v || '').replace(/"/g, '""') + '"');
-      csvContent += rowEscaped.join(";") + "\r\n";
+      dataRows.push(rowValues.map(v => (typeof v === 'number' ? v : String(v || ''))));
     });
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    link.setAttribute("href", URL.createObjectURL(blob));
-    link.setAttribute("download", "Spice_Export_" + month + ".csv");
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadXlsxSheets(buildMonthlyExportSheets(month, header, dataRows), `Spice_Export_${month}.xlsx`);
 
   } catch (err) {
     showModal("Szerver hiba az export során: " + err.message, "Hiba");
