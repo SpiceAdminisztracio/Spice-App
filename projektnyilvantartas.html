@@ -218,6 +218,24 @@
 
     .overtime-cell { background-color: #fef2f2 !important; color: #dc2626 !important; font-weight: bold; }
     .sunday-col { background-color: #f1f5f9 !important; font-weight: bold; }
+    /* ===== ADMIN FÜL ===== */
+    .adm-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 16px; }
+    .adm-card-accent { border-left: 4px solid #f59e0b; background: #fffdf7; }
+    .adm-card-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+    .adm-card-head > .flex-grow-1, .adm-card-head > div:nth-child(2) { flex: 1 1 220px; min-width: 0; }
+    .adm-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.05rem; flex-shrink: 0; }
+    .adm-title { font-weight: 700; font-size: 0.95rem; color: #0f172a; }
+    .adm-sub { font-size: 0.75rem; color: #64748b; line-height: 1.35; }
+    .adm-row + .adm-row { margin-top: 14px; padding-top: 14px; border-top: 1px dashed #e2e8f0; }
+    .adm-hint { display: block; font-size: 0.7rem; margin-top: 3px; }
+    #adm-tab #lockedMonthsContainer { display: block !important; }
+    .lm-year { font-size: 0.7rem; font-weight: 700; color: #64748b; margin: 8px 0 4px; }
+    .lm-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .lm-chip { display: inline-flex; align-items: center; gap: 6px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af;
+               border-radius: 999px; padding: 3px 4px 3px 10px; font-size: 0.75rem; font-weight: 600; }
+    .lm-chip button { border: 0; background: transparent; color: #94a3b8; border-radius: 999px; width: 22px; height: 22px;
+                      display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+    .lm-chip button:hover { background: #fee2e2; color: #dc2626; }
     .cjp-table th, .cjp-table td { font-size: 0.8rem; padding: 5px 8px !important; }
     /* Jelölőnégyzetek és választógombok: valódi pipa / pötty látszódjon */
     input[type="checkbox"].form-check-input:not([role="switch"]) { width: 1.1em; height: 1.1em; border: 1.5px solid #94a3b8; border-radius: 4px; cursor: pointer; }
@@ -687,19 +705,30 @@
   </div>
 
   <!-- 5. FÜL: ADMIN -->
-  <div id="adm-tab" class="tab-content-item card p-4 shadow-sm">
-    <div class="alert alert-warning py-3 mb-4">
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <span class="fw-bold"><i class="bi bi-unlock me-1"></i> Véglegesítésre váró kérelmek (Admin)</span>
-        <button class="btn btn-success btn-sm rounded-pill fw-bold" id="btnApproveAll" onclick="runApproveAllRequests()">
-          <i class="bi bi-check-all me-1"></i> Összes elfogadása
+  <div id="adm-tab" class="tab-content-item card p-3 p-md-4 shadow-sm">
+    <div class="d-flex align-items-center justify-content-between mb-3 pb-2 border-bottom">
+      <div>
+        <h5 class="fw-bold mb-0"><i class="bi bi-gear-fill me-2 text-secondary"></i>Adminisztráció</h5>
+        <small class="text-muted">Kérelmek véglegesítése, hónapzárás, exportok</small>
+      </div>
+    </div>
+
+    <!-- 1. TEENDŐ: VÉGLEGESÍTÉSRE VÁRÓ KÉRELMEK -->
+    <div class="adm-card adm-card-accent mb-4">
+      <div class="adm-card-head">
+        <div class="adm-icon bg-warning-subtle text-warning-emphasis"><i class="bi bi-unlock"></i></div>
+        <div class="flex-grow-1">
+          <div class="adm-title">Véglegesítésre váró nyitási kérelmek <span class="badge bg-warning text-dark ms-1" id="admReqCount">0</span></div>
+          <div class="adm-sub">A felettes által már jóváhagyott kérelmek – büntetéses vagy büntetlen nyitás</div>
+        </div>
+        <button class="btn btn-success btn-sm fw-bold text-nowrap" id="btnApproveAll" onclick="runApproveAllRequests()" style="display:none;">
+          <i class="bi bi-check-all me-1"></i> Összes véglegesítése
         </button>
       </div>
-
       <div class="table-container bg-white border rounded">
         <table class="table table-sm table-hover align-middle mb-0 small">
           <thead class="table-light">
-            <tr><th>Név</th><th>Dátum</th><th>Indok</th><th class="text-center">Jóv.</th></tr>
+            <tr><th>Név</th><th>Dátum</th><th>Indok</th><th class="text-center">Művelet</th></tr>
           </thead>
           <tbody id="requestTableBody">
             <tr><td colspan="4" class="text-center text-muted p-3">Nincs adminisztrátori véglegesítésre váró kérelem.</td></tr>
@@ -708,50 +737,97 @@
       </div>
     </div>
 
-    <div class="card p-3 mb-4 border-0 bg-light">
-      <label class="form-label fw-bold small" for="adminTargetMonth">Hónap lezárása / Zártak</label>
-      <div class="input-group input-group-sm">
-        <input class="form-control" type="month" id="adminTargetMonth">
-        <button class="btn btn-dark" onclick="openConfirmModal('LOCK')">Lezárás</button>
+    <div class="row g-3 mb-4">
+      <!-- 2. HÓNAPZÁRÁS -->
+      <div class="col-12 col-lg-6">
+        <div class="adm-card h-100">
+          <div class="adm-card-head">
+            <div class="adm-icon bg-dark-subtle text-dark"><i class="bi bi-lock"></i></div>
+            <div>
+              <div class="adm-title">Hónapzárás</div>
+              <div class="adm-sub">Lezárt hónapba csak jóváhagyott nyitási kérelemmel lehet rögzíteni</div>
+            </div>
+          </div>
+          <label class="form-label small fw-bold mb-1" for="adminTargetMonth">Lezárandó hónap</label>
+          <div class="input-group input-group-sm">
+            <input class="form-control" type="month" id="adminTargetMonth">
+            <button class="btn btn-dark fw-bold" onclick="openConfirmModal('LOCK')"><i class="bi bi-lock-fill me-1"></i>Lezárás</button>
+          </div>
+          <div class="d-flex justify-content-between align-items-center mt-3 mb-1">
+            <span class="small fw-bold">Lezárt hónapok</span>
+            <span class="small text-muted" id="lockedMonthsCount"></span>
+          </div>
+          <div id="lockedMonthsContainer"></div>
+        </div>
       </div>
-      <div id="lockedMonthsContainer" class="d-flex flex-wrap gap-2 mt-3"></div>
+
+      <!-- 3. EXPORTOK -->
+      <div class="col-12 col-lg-6">
+        <div class="adm-card h-100">
+          <div class="adm-card-head">
+            <div class="adm-icon bg-primary-subtle text-primary"><i class="bi bi-download"></i></div>
+            <div>
+              <div class="adm-title">Exportok</div>
+              <div class="adm-sub">Letölthető kimutatások</div>
+            </div>
+          </div>
+
+          <div class="adm-row">
+            <label class="form-label small fw-bold mb-1" for="exportMonthSelect">Havi munkaidő-összesítő</label>
+            <div class="input-group input-group-sm">
+              <select class="form-select" id="exportMonthSelect"></select>
+              <button class="btn btn-primary fw-bold" onclick="runExport()" id="exportCsvBtn"><i class="bi bi-file-earmark-arrow-down me-1"></i>Letöltés</button>
+            </div>
+            <small class="text-muted adm-hint">Csak lezárt hónap választható.</small>
+          </div>
+
+          <div class="adm-row">
+            <label class="form-label small fw-bold mb-1" for="exportRequestsMonth">Nyitási kérelmek és döntések</label>
+            <div class="input-group input-group-sm">
+              <input type="month" class="form-control" id="exportRequestsMonth">
+              <button class="btn btn-primary fw-bold" onclick="exportRequestsToCsv()" id="exportRequestsBtn"><i class="bi bi-file-earmark-arrow-down me-1"></i>Letöltés (CSV)</button>
+            </div>
+            <small class="text-muted adm-hint">A kiválasztott hónap összes kérelme a döntésekkel.</small>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- MEGLÉVŐ KÓD (Havi összesítő) -->
-    <div class="card p-3 border-0 bg-light mb-4">
-      <p class="fw-bold small mb-2">Havi munkaidő összesítő generálása (csak a lezárt hónapokat lehet)</p>
-      <div class="input-group input-group-sm">
-        <select class="form-select" id="exportMonthSelect"></select>
-        <button class="btn btn-primary" onclick="runExport()" id="exportCsvBtn">Letöltés</button>
-      </div>
-    </div>
+    <!-- 4. RENDSZERESZKÖZÖK (csak admin jogkör) -->
+    <div id="adminToolsSection" style="display:none;">
+      <div class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:0.5px; font-size:0.7rem;">Rendszereszközök</div>
+      <div class="row g-3">
+        <div class="col-12 col-lg-6" id="viewAsWrap" style="display:none;">
+          <div class="adm-card h-100">
+            <div class="adm-card-head">
+              <div class="adm-icon bg-secondary-subtle text-secondary-emphasis"><i class="bi bi-eye"></i></div>
+              <div>
+                <div class="adm-title">Megtekintés így</div>
+                <div class="adm-sub">Csak olvasható nézet egy munkatárs szemével. Semmit nem lehet módosítani, e-mail nem megy ki, minden megnyitás és kilépés naplózva.</div>
+              </div>
+            </div>
+            <div class="input-group input-group-sm">
+              <select class="form-select" id="viewAsSelect"></select>
+              <button type="button" class="btn btn-outline-dark fw-bold" onclick="startViewAs()"><i class="bi bi-eye me-1"></i>Megnyitás</button>
+            </div>
+          </div>
+        </div>
 
-    <!-- ÚJ KÓD: Nyitási kérelmek exportálása -->
-    <div class="card p-3 border-0 bg-light">
-      <p class="fw-bold small mb-2 text-warning-emphasis"><i class="bi bi-unlock-fill me-1"></i> Nyitási kérelmek / Döntések exportálása (Havi)</p>
-      <div class="input-group input-group-sm">
-        <input type="month" class="form-control" id="exportRequestsMonth">
-        <button class="btn btn-warning fw-bold text-dark" onclick="exportRequestsToCsv()" id="exportRequestsBtn">Kérelmek letöltése (CSV)</button>
+        <div class="col-12 col-lg-6" id="forceReloadAllWrap" style="display:none;">
+          <div class="adm-card h-100">
+            <div class="adm-card-head">
+              <div class="adm-icon bg-warning-subtle text-warning-emphasis"><i class="bi bi-arrow-repeat"></i></div>
+              <div>
+                <div class="adm-title">Mindenki frissítése</div>
+                <div class="adm-sub">Adatbázis-módosítás után: minden nyitva hagyott Távollét Kezelő és Projektnyilvántartás ablak 2 percen belül újratölt.</div>
+              </div>
+            </div>
+            <button type="button" class="btn btn-outline-warning text-dark btn-sm fw-bold w-100" id="forceReloadAllBtn" onclick="forceAllClientsReload()">
+              <i class="bi bi-arrow-repeat me-1"></i> Mindenki frissítése
+            </button>
+          </div>
+        </div>
       </div>
-    </div>
-    <!-- MEGTEKINTÉS ÍGY (csak admin jogkör) -->
-    <div class="card p-3 border-0 bg-light mt-4" id="viewAsWrap" style="display:none;">
-      <label class="form-label small fw-bold mb-1" for="viewAsSelect"><i class="bi bi-eye me-1"></i> Megtekintés így</label>
-      <div class="d-flex gap-2">
-        <select class="form-select form-select-sm" id="viewAsSelect"></select>
-        <button type="button" class="btn btn-outline-dark btn-sm fw-bold text-nowrap" onclick="startViewAs()">
-          <i class="bi bi-eye me-1"></i> Megnyitás
-        </button>
-      </div>
-      <small class="text-muted d-block mt-1" style="font-size:0.72rem;">Csak olvasható nézet a kiválasztott munkatárs szemével: semmit nem lehet módosítani, e-mail nem megy ki. Minden megnyitás és kilépés naplózva.</small>
-    </div>
-
-    <!-- MINDENKI FRISSÍTÉSE (közös a Távollét Kezelővel) -->
-    <div class="card p-3 border-0 bg-light mt-4" id="forceReloadAllWrap" style="display:none;">
-      <button type="button" class="btn btn-outline-warning text-dark w-100 btn-sm fw-bold" id="forceReloadAllBtn" onclick="forceAllClientsReload()">
-        <i class="bi bi-arrow-repeat me-1"></i> Mindenki frissítése
-      </button>
-      <small class="text-muted d-block mt-1" style="font-size:0.72rem;">Adatbázis-módosítás után: minden nyitva hagyott Távollét Kezelő és Projektnyilvántartás ablak 2 percen belül újratölt.</small>
     </div>
   </div> <!-- adm-tab vége -->
 
@@ -5395,7 +5471,11 @@ async function executeSendAllReminders() {
 
       if (adminReqs.length === 0) {
         adminTbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted p-3">Nincs adminisztrátori véglegesítésre váró kérelem.</td></tr>';
+        const cntEl0 = document.getElementById('admReqCount'); if (cntEl0) cntEl0.innerText = '0';
+        const allBtn0 = document.getElementById('btnApproveAll'); if (allBtn0) allBtn0.style.display = 'none';
       } else {
+        const cntEl = document.getElementById('admReqCount'); if (cntEl) cntEl.innerText = String(adminReqs.length);
+        const allBtn = document.getElementById('btnApproveAll'); if (allBtn) allBtn.style.display = '';
         adminTbody.innerHTML = adminReqs.map(r => {
           const leaderComment = (r.approver_comment || '').trim();
           const leaderBlock = leaderComment
@@ -5714,19 +5794,32 @@ async function exportRequestsToCsv() {
         return;
       }
 
-      let html = '';
+      // Évenként csoportosított, kompakt címkék
+      const monthNamesShort = ['jan.', 'feb.', 'márc.', 'ápr.', 'máj.', 'jún.', 'júl.', 'aug.', 'szept.', 'okt.', 'nov.', 'dec.'];
+      const byYear = {};
       data.forEach(item => {
-        html += `
-          <div class="card p-2 d-flex flex-row justify-content-between align-items-center border-start border-4 border-primary">
-            <span class="badge bg-primary me-2"><i class="bi bi-lock me-1"></i>${escapeHtml(item.honap)}</span>
-            <button class="btn btn-outline-danger btn-sm py-0 px-2" onclick="unlockMonth('${item.honap}')" title="Hónap feloldása">
-              <i class="bi bi-unlock"></i> Feloldás
-            </button>
-          </div>
-        `;
+        const hm = String(item.honap || '').trim().replace('.', '-');
+        const y = hm.substring(0, 4) || '?';
+        (byYear[y] = byYear[y] || []).push({ raw: item.honap, hm });
+      });
+
+      let html = '';
+      Object.keys(byYear).sort().reverse().forEach(y => {
+        const chips = byYear[y].sort((a, b) => b.hm.localeCompare(a.hm)).map(m => {
+          const mi = parseInt(m.hm.substring(5, 7), 10);
+          const label = mi >= 1 && mi <= 12 ? monthNamesShort[mi - 1] : m.hm;
+          const safeRaw = escapeHtml(String(m.raw)).replace(/'/g, "\\'");
+          return `<span class="lm-chip" title="${escapeHtml(m.hm)} – lezárva">
+              <i class="bi bi-lock-fill"></i>${escapeHtml(label)}
+              <button type="button" onclick="unlockMonth('${safeRaw}')" title="${escapeHtml(m.hm)} feloldása"><i class="bi bi-unlock"></i></button>
+            </span>`;
+        }).join('');
+        html += `<div class="lm-year">${escapeHtml(y)}</div><div class="lm-chips">${chips}</div>`;
       });
 
       container.innerHTML = html;
+      const lmCount = document.getElementById('lockedMonthsCount');
+      if (lmCount) lmCount.innerText = `${data.length} hónap`;
 
     } catch (err) {
       lockedMonths = [];
@@ -6520,6 +6613,8 @@ async function processApproval(requestId, action) {
     // "Mindenki frissítése" és "Megtekintés így" csak teljes jogú adminnak (megtekintés módban nem)
     const frWrap = document.getElementById('forceReloadAllWrap');
     if (frWrap) frWrap.style.display = cleanRole === 'admin' && !window.viewAsMode ? '' : 'none';
+    const toolsSec = document.getElementById('adminToolsSection');
+    if (toolsSec) toolsSec.style.display = cleanRole === 'admin' && !window.viewAsMode ? '' : 'none';
     const vaWrap = document.getElementById('viewAsWrap');
     if (vaWrap) {
       vaWrap.style.display = cleanRole === 'admin' && !window.viewAsMode ? '' : 'none';
