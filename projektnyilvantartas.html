@@ -1292,12 +1292,42 @@
     return /betekint/.test(pnNorm(p?.latott_fulek || ''));
   }
 
+  // Csoport-szöveg -> account csoportkód ('A1'..'A4'), egyébként ''
+  function accountCodeOfGroup(str) {
+    const g = pnNorm(str);
+    const m = g.match(/account\s*-?\s*([1-4])/) || g.match(/(?:^|[^a-z0-9])a([1-4])(?:[^0-9]|$)/);
+    return m ? 'A' + m[1] : '';
+  }
+
+  // Egy vezető csapata: a saját csoportja, a látott csoportjai ÉS azok a munkatársak,
+  // akiknél ő a csoportvezető / leader / manager (így a "Vezetőség" csoportú vezetőt is felismeri)
+  function getLeaderTeamInfo(p) {
+    const codes = new Set();
+    let creative = typeof isCreativeTeamUser === 'function' && isCreativeTeamUser(p);
+    const add = (g) => { const c = accountCodeOfGroup(g); if (c) codes.add(c); };
+    add(p?.csoport);
+    String(p?.latott_csoportok || '').split(',').forEach(add);
+
+    const me = pnNorm(p?.email);
+    if (me) {
+      (window.pnAllProfiles || []).forEach(sub => {
+        if (isInactiveProfile(sub)) return;
+        const chain = [sub.csoportvezeto_email, sub.leader_email, sub.manager_email]
+          .join(',').split(',').map(x => pnNorm(x)).filter(Boolean);
+        if (!chain.includes(me)) return;
+        add(sub.csoport);
+        if (typeof isCreativeTeamUser === 'function' && isCreativeTeamUser(sub)) creative = true;
+      });
+    }
+    return { codes, creative };
+  }
+
   // Kreatív ráfordítás statisztika: admin, teljes betekintés, illetve account vagy kreatív csapat vezetője
   function canSeeCreativeStats(p) {
     if (roleOf(p) === 'admin' || hasFullView(p)) return true;
     if (!isLeaderTier(p)) return false;
-    const acc = typeof getUserAccountGroupCode === 'function' ? getUserAccountGroupCode(p) : 'ALL';
-    return acc !== 'ALL' || (typeof isCreativeTeamUser === 'function' && isCreativeTeamUser(p));
+    const info = getLeaderTeamInfo(p);
+    return info.codes.size > 0 || info.creative;
   }
 
   // --- Ki bírálhatja el a nyitási kérelmet ---
@@ -6796,12 +6826,27 @@ function fixTeamStatPills() {
   if (groupSelect) {
     const roleStr = typeof normalizeStr === 'function' ? normalizeStr(currentUserProfile?.jogosultsag || currentUserProfile?.role || '') : String(currentUserProfile?.jogosultsag || '').toLowerCase();
     const isAdminUser = roleOf(currentUserProfile) === 'admin';
+    const seesAll = isAdminUser || hasFullView(currentUserProfile);
+    const info = seesAll ? null : getLeaderTeamInfo(currentUserProfile);
 
-    if (!isAdminUser && userGroupCode !== 'ALL') {
-      groupSelect.value = userGroupCode;
-      groupSelect.disabled = true;
-    } else {
+    // Alaphelyzet: minden opció elérhető
+    Array.from(groupSelect.options).forEach(o => { o.disabled = false; o.hidden = false; });
+    groupSelect.disabled = false;
+
+    if (seesAll || (info && info.creative)) {
+      // Admin, teljes betekintés és a kreatív csapat vezetői minden csoportot láthatnak
       groupSelect.value = 'ALL';
+    } else if (info && info.codes.size > 0) {
+      // Account-vezető: csak a saját csapata(i) csoportkódja
+      Array.from(groupSelect.options).forEach(o => {
+        const allowed = info.codes.has(o.value);
+        o.disabled = !allowed;
+        o.hidden = !allowed;
+      });
+      groupSelect.value = [...info.codes].sort()[0];
+      groupSelect.disabled = info.codes.size === 1;
+    } else {
+      groupSelect.value = userGroupCode !== 'ALL' ? userGroupCode : 'ALL';
     }
   }
 
