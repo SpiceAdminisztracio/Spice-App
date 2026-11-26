@@ -1178,6 +1178,18 @@
   #overtimeBudgetsCard .card-header .d-flex.align-items-center.gap-2 { flex-wrap: wrap; }
   #overtimeBudgetsCard .card-header .btn { white-space: normal !important; }
 
+  /* Semmi ne tolja ki a lapot oldalra (különben az egész oldal összezsugorodik) */
+  html, body { overflow-x: hidden !important; max-width: 100vw; }
+  .container, .card, .card-body { max-width: 100%; min-width: 0; }
+  .badge { white-space: normal !important; overflow-wrap: anywhere; text-align: left; max-width: 100%; }
+  .badge-wrap, .ac-type .badge.badge-wrap { display: inline-block; line-height: 1.3; white-space: normal !important; overflow-wrap: anywhere !important; text-align: left; max-width: 100%; }
+  .btn { max-width: 100%; }
+
+  /* Függő kérelmek kártyái: a tartalom ne szélesítse ki a rácsot */
+  .ac-main { grid-template-columns: minmax(0, 1fr) !important; }
+  .ac-main > * { min-width: 0; }
+  .ac-actions .btn { flex: 1 1 0; min-width: 0; }
+
   /* Admin alfülek: vízszintesen görgethető sáv */
   .admin-subnav { flex-wrap: nowrap !important; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
   .admin-subnav::-webkit-scrollbar { display: none; }
@@ -7723,8 +7735,8 @@ function buildCreativeOpinionEmailHtml(dolgozoNeve, tipus, kezdoDatum, vegDatum,
             else if (rHOKind === 'sick') badgeHtml += `<span class="badge bg-danger">Betegség miatt</span>`;
             else if (isCreativeReq) badgeHtml += `<span class="badge text-white" style="background-color: #6f42c1 !important;">Kreatív véleményezés</span>`;
             if (r.rendkivuli) badgeHtml += `<span class="badge bg-danger-subtle text-danger border border-danger-subtle">Rendkívüli</span>`;
-            if (r._viaSubstitute) badgeHtml += `<span class="badge bg-light text-dark border" title="A távolléted alatt a helyettesedhez került">Helyettesnél: ${escapeHtml(r._viaSubstitute)}</span>`;
-            if (r._forSubstituted) badgeHtml += `<span class="badge bg-info-subtle text-dark border" title="Ma te helyettesíted – elbírálhatod helyette">Helyettesítés: ${escapeHtml(r._forSubstituted)} nevében</span>`;
+            if (r._viaSubstitute) badgeHtml += `<span class="badge bg-light text-dark border badge-wrap" title="A távolléted alatt a helyettesedhez került: ${escapeHtml(r._viaSubstitute)}">Helyettesnél: ${escapeHtml(isSystemSubstituteEmail(r._viaSubstitute) ? 'Admin (rendszerfiók)' : String(r._viaSubstitute).split('@')[0])}</span>`;
+            if (r._forSubstituted) badgeHtml += `<span class="badge bg-info-subtle text-dark border badge-wrap" title="Ma te helyettesíted – elbírálhatod helyette">Helyettesítés: ${escapeHtml(r._forSubstituted)} nevében</span>`;
 
             let actionButtonsHtml = '';
             const opinionBtn = `<button class="btn btn-sm fw-bold text-white" style="background-color: #6f42c1 !important;" onclick="promptCreativeOpinion('${r.id}')"><i class="bi bi-chat-left-text me-1"></i>Véleményezés</button>`;
