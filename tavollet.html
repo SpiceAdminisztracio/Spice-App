@@ -10309,8 +10309,11 @@ async function loadOvertimeApprovals() {
     const isAdmin = myRoleRaw.includes('admin') || myRoleRaw.includes('boss');
     const isManager = (myRoleRaw.includes('manag') || myRoleRaw.includes('mgr')) && !isAdmin;
 
-    // 🎯 KIZÁRÓLAG MANAGER ÉS A FELETTI SZINT LÉPHET TOVÁBB
-    if (!isAdmin && !isManager) {
+    // Teljes betekintés: minden csapat függő kifizetése látszik, de csak megtekintésre
+    const fullView = typeof hasFullView === 'function' && hasFullView(prof);
+
+    // 🎯 KIZÁRÓLAG MANAGER ÉS A FELETTI SZINT (vagy teljes betekintés) LÉPHET TOVÁBB
+    if (!isAdmin && !isManager && !fullView) {
       tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-4"><i class="bi bi-shield-lock me-1"></i> Ez a felület kizárólag Manager és a feletti szintű vezetők számára érhető el.</td></tr>`;
       return;
     }
@@ -10391,7 +10394,7 @@ async function loadOvertimeApprovals() {
     });
 
     if (!isAdmin) {
-      pendingRequests = pendingRequests.filter(d => {
+      const canDecide = (d) => {
         const emailKey = safeNorm(d.user_email || d.email || d.munkatars_email);
         const targetProf = profMap[emailKey] || (d.profile_id ? profMap[d.profile_id] : null) || (emailKey.includes('@') ? profMap[emailKey.split('@')[0]] : null);
         const st = safeNorm(d.status);
@@ -10427,12 +10430,21 @@ async function loadOvertimeApprovals() {
         const isGroupMatch = dGroup && myOpGroups.has(dGroup);
 
         return isDirectSub || isSubmitterSub || isGroupMatch;
-      });
+      };
+      if (fullView) {
+        // amit nem ő bírál el, az is megjelenik, gombok nélkül
+        pendingRequests.forEach(d => { d._viewOnly = !(isManager && canDecide(d)) || safeNorm(d.user_email) === myEmail; });
+      } else {
+        pendingRequests = pendingRequests.filter(d => isManager && canDecide(d));
+      }
     }
 
-    // 👔 Boss: csak a vezetők kifizetései
-    pendingRequests = bossFilterDecisions(pendingRequests, profiles, prof)
+    // 👔 Boss: csak a vezetők kifizetései (teljes betekintésnél a csak megtekinthetők maradnak)
+    const decidable = bossFilterDecisions(pendingRequests.filter(d => !d._viewOnly), profiles, prof);
+    pendingRequests = pendingRequests.filter(d => d._viewOnly || decidable.includes(d))
       .filter(d => !isInactiveEmail(d.user_email || d.email || d.munkatars_email));
+    // az elbírálandók elöl
+    pendingRequests.sort((a, b) => (a._viewOnly ? 1 : 0) - (b._viewOnly ? 1 : 0));
 
     const noMsgEl = document.getElementById('noPayoutApprovalsMsg');
 
@@ -10473,6 +10485,7 @@ async function loadOvertimeApprovals() {
           </td>
           <td data-label="Beküldve"><small class="text-muted">${formatDate(r.created_at || r.datum)}</small></td>
           <td data-label="Műveletek" class="text-end pe-3">
+            ${r._viewOnly ? `<span class="badge bg-light text-secondary border fw-semibold px-2 py-2" title="Teljes betekintés: ezt a kifizetést a jóváhagyási lánc szerinti vezető bírálja el"><i class="bi bi-eye me-1"></i>Csak betekintés</span>` : `
             <div class="d-flex justify-content-end gap-1">
               <button class="btn btn-sm btn-success fw-bold px-2 py-1" onclick="processApproval('${r.id}', 'approved')">
                 <i class="bi bi-check-lg"></i> Elfogad
@@ -10480,7 +10493,7 @@ async function loadOvertimeApprovals() {
               <button class="btn btn-sm btn-outline-danger fw-bold px-2 py-1" onclick="openChallengeModal('${r.id}', ${r.osszeg || 0}, ${r.eredeti_osszeg || r.osszeg || 0})">
                 <i class="bi bi-exclamation-triangle"></i> Challenge
               </button>
-            </div>
+            </div>`}
           </td>
         </tr>
       `;
