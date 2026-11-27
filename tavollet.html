@@ -1655,7 +1655,8 @@
               <thead class="table-light">
                 <tr>
                   <th class="text-start">Munkatárs</th>
-                  <th>Dátum / Hónap</th>
+                  <th>Beküldve</th>
+                  <th>Bérhónap</th>
                   <th>Kategória</th>
                   <th>Kifizetett óra</th>
                   <th>Összeg</th>
@@ -1664,7 +1665,7 @@
                 </tr>
               </thead>
               <tbody id="payoutHistoryTableBody">
-                <tr><td colspan="7" class="text-muted py-3">Kattints a megnyitáshoz az előzmények betöltéséhez...</td></tr>
+                <tr><td colspan="8" class="text-muted py-3">Kattints a megnyitáshoz az előzmények betöltéséhez...</td></tr>
               </tbody>
             </table>
           </div>
@@ -1804,12 +1805,13 @@
                 <th>Sáv</th>
                 <th>Összeg</th>
                 <th>Indoklás</th>
-                <th>Dátum / Hónap</th>
+                <th>Beküldve</th>
+                <th>Bérhónap</th>
                 <th>Státusz / Jóváhagyó</th>
               </tr>
             </thead>
             <tbody id="approvalHistoryTableBody">
-              <tr><td colspan="9" class="text-muted py-3">Kattints a megnyitáshoz az előzmények betöltéséhez...</td></tr>
+              <tr><td colspan="10" class="text-muted py-3">Kattints a megnyitáshoz az előzmények betöltéséhez...</td></tr>
             </tbody>
           </table>
         </div>
@@ -10497,7 +10499,7 @@ async function loadApprovalHistory() {
   const monthFilter = monthSelect?.value || 'ALL';
 
   if (!tbody) return;
-  tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm text-primary me-2"></div>Előzmények betöltése...</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm text-primary me-2"></div>Előzmények betöltése...</td></tr>`;
 
   try {
     const prof = window.currentUserProfile || (typeof currentUserProfile !== 'undefined' ? currentUserProfile : {});
@@ -10651,7 +10653,7 @@ async function loadApprovalHistory() {
     }
 
     if (processedRequests.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-3">Nincs korábbi kifizetési előzmény a kiválasztott időszakban.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-3">Nincs korábbi kifizetési előzmény a kiválasztott időszakban.</td></tr>`;
       return;
     }
 
@@ -10667,7 +10669,6 @@ async function loadApprovalHistory() {
       const submitterName = safeEscape(r.submitter_name || r.submitter_email || r.felettes_email || '-');
       const approverName = safeEscape(r.approver_email || '-');
       const amountFormatted = Number(r.osszeg || r.amount || 0).toLocaleString('hu-HU') + ' Ft';
-      const dateDisplay = r.datum || (r.created_at ? String(r.created_at).substring(0, 10) : '-');
 
       return `
         <tr>
@@ -10678,7 +10679,7 @@ async function loadApprovalHistory() {
           <td data-label="Sáv"><span class="badge bg-info text-dark">${safeEscape(r.sav || '-')}</span></td>
           <td data-label="Összeg" class="fw-bold text-success">${amountFormatted}</td>
           <td data-label="Indoklás" class="text-start"><small class="text-muted d-block text-truncate" style="max-width: 140px;" title="${safeEscape(r.megjegyzes || '-')}">${safeEscape(r.megjegyzes || '-')}</small></td>
-          <td data-label="Dátum"><span class="badge bg-light text-dark border">${dateDisplay}</span></td>
+          ${payoutSubmitAndPayrollCells(r)}
           <td data-label="Státusz">${statusBadge}<small class="d-block text-muted" style="font-size:0.7rem;">${approverName}</small>${(st === 'challenged' && r.challenge_reason) ? `<small class="d-block text-danger fw-bold mt-1" style="font-size:0.7rem; max-width: 180px; white-space: normal;"><i class="bi bi-chat-left-dots-fill me-1"></i>${safeEscape(r.challenge_reason)}</small>` : ''}</td>
         </tr>
       `;
@@ -10686,7 +10687,7 @@ async function loadApprovalHistory() {
 
   } catch (err) {
     console.error("Hiba a korábbi előzmények betöltésekor:", err);
-    tbody.innerHTML = `<tr><td colspan="9" class="text-danger py-3 text-center">Hiba történt: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="text-danger py-3 text-center">Hiba történt: ${err.message}</td></tr>`;
   }
 }
 
@@ -10739,7 +10740,7 @@ function renderOvertimeApprovalsTable() {
 
   const noMsgEl = document.getElementById('noPayoutApprovalsMsg');
   if (displayRequests.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" class="text-muted py-4 text-center">Nincs megjeleníthető kifizetési kérelem a kiválasztott időszakban.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="text-muted py-4 text-center">Nincs megjeleníthető kifizetési kérelem a kiválasztott időszakban.</td></tr>`;
     if (noMsgEl) noMsgEl.classList.remove('hidden');
     return;
   } else if (noMsgEl) {
@@ -12344,6 +12345,27 @@ async function submitChallenge() {
     document.body.removeChild(link);
   }
 
+  // Kifizetés: beküldés napja és bérszámfejtési hónapja (az előzmény-táblázatokhoz)
+  function payoutSubmitAndPayrollCells(d) {
+    const sub = d.created_at || d.datum || '';
+    const sd = sub ? new Date(sub) : null;
+    const subTxt = (sd && !isNaN(sd.getTime()))
+      ? `${sd.getFullYear()}.${String(sd.getMonth() + 1).padStart(2, '0')}.${String(sd.getDate()).padStart(2, '0')}.`
+      : '-';
+    const st = String(d.status || '').toLowerCase();
+    let honapTxt = '-';
+    if (!(st.includes('reject') || st.includes('elutasit')) && sub) {
+      const isPending = st.startsWith('pending') || st.includes('fuggo') || st.includes('függő');
+      const per = getPayrollPeriodForDate(sub, isPending ? new Date().toISOString() : (d.approved_at || d.updated_at || sub));
+      if (per) {
+        const mn = new Date(per.y, per.m - 1, 1).toLocaleString('hu-HU', { month: 'long' });
+        honapTxt = `${per.y}. ${mn}` + (isPending ? ' <small class="text-muted">(várható)</small>' : '');
+      }
+    }
+    return `<td data-label="Beküldve"><span class="badge bg-light text-dark border">${subTxt}</span></td>`
+         + `<td data-label="Bérhónap" class="fw-semibold">${honapTxt}</td>`;
+  }
+
   function getPayrollPeriodForDate(submittedAtStr, approvedAtStr) {
   if (!submittedAtStr) return null;
 
@@ -13306,7 +13328,7 @@ async function loadPayoutHistory() {
   const selectedGroup = groupFilterEl?.value || 'ALL';
 
   if (!tbody) return;
-  tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm text-primary me-2"></div>Előzmények betöltése...</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm text-primary me-2"></div>Előzmények betöltése...</td></tr>`;
 
   try {
     const prof = window.currentUserProfile || currentUserProfile || (typeof userStaticData !== 'undefined' ? userStaticData : {});
@@ -13459,7 +13481,7 @@ async function loadPayoutHistory() {
     }
 
     if (approvedPayouts.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-3">Nincs megjeleníthető kifizetési előzmény a választott szűrésben.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-3">Nincs megjeleníthető kifizetési előzmény a választott szűrésben.</td></tr>`;
       return;
     }
 
@@ -13467,7 +13489,6 @@ async function loadPayoutHistory() {
 
     tbody.innerHTML = approvedPayouts.map(d => {
       const name = safeEscape(d.nev || d.user_email || '-');
-      const dateStr = d.datum || d.honap || (d.created_at ? String(d.created_at).substring(0, 7) : '-');
       const cat = safeEscape(d.overtime_category || d.tipus || 'Túlmunka');
       const hours = Number(d.orak || 0);
       const amount = Number(d.osszeg || d.eredeti_osszeg || d.amount || 0);
@@ -13492,7 +13513,7 @@ async function loadPayoutHistory() {
       return `
         <tr>
           <td data-label="Munkatárs" class="text-start fw-bold text-dark">${name}</td>
-          <td data-label="Dátum / Hónap"><span class="badge bg-light text-dark border">${dateStr}</span></td>
+          ${payoutSubmitAndPayrollCells(d)}
           <td data-label="Kategória">${cat}</td>
           <td data-label="Óra" class="fw-semibold">${fmtOra(hours)} óra</td>
           <td data-label="Összeg">
@@ -13507,7 +13528,7 @@ async function loadPayoutHistory() {
 
   } catch (err) {
     console.error("Kifizetési előzmények betöltési hiba:", err);
-    tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-3">Hiba az előzmények betöltésekor: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger py-3">Hiba az előzmények betöltésekor: ${err.message}</td></tr>`;
   }
 }
 
